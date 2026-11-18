@@ -1,0 +1,251 @@
+// ============================================================================
+// HUD a UI (oddíl 10): minimální čitelný panel vpravo dole (NR %, kolektiv %,
+// výška nad terénem, rychlost, zatížení navijáku), horní proužek s cílem a
+// kompasovou značkou, radiogramy dispečera, výzvy, překryvy (start, nápověda,
+// telemetrie, pilotní poznámky). Vše DOM + malé SVG ikony, žádné textury.
+// ============================================================================
+
+import type { FlightTelemetry } from '../helicopter/flightModel';
+import type { Mission, ShiftReport } from '../game/mission';
+import type { ControlSettings } from '../helicopter/controls';
+
+const ICONS = {
+  rotor: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7M5 5l5 5M14 14l5 5M19 5l-5 5M10 14l-5 5"/></svg>',
+  collective: '<svg viewBox="0 0 24 24"><path d="M12 3v18M7 8l5-5 5 5"/></svg>',
+  altitude: '<svg viewBox="0 0 24 24"><path d="M3 20h18M12 4l4 6H8l4-6zM12 10v10"/></svg>',
+  speed: '<svg viewBox="0 0 24 24"><path d="M4 14a8 8 0 1 1 16 0M12 14l4-5"/></svg>',
+  load: '<svg viewBox="0 0 24 24"><path d="M12 3v6M6 9h12l-2 11H8L6 9z"/></svg>',
+  rope: '<svg viewBox="0 0 24 24"><path d="M6 3c6 3-6 6 0 9s-6 6 0 9M18 3c-6 3 6 6 0 9s6 6 0 9"/></svg>',
+};
+
+export class Hud {
+  private root: HTMLElement;
+  private el!: Record<string, HTMLElement>;
+
+  constructor(root: HTMLElement) {
+    this.root = root;
+    this.build();
+  }
+
+  private build(): void {
+    const ui = this.root;
+    ui.innerHTML = `
+      <div id="stats" class="panel">
+        <div class="row"><span class="label">${ICONS.rotor} NR</span><span class="value" id="nr">0 %</span></div>
+        <div class="row"><span class="label">${ICONS.collective} kolektiv</span><span class="value" id="coll">0 %</span></div>
+        <div class="row"><span class="label">${ICONS.altitude} nad terénem</span><span class="value" id="agl">–</span></div>
+        <div class="row"><span class="label">${ICONS.speed} rychlost</span><span class="value" id="spd">0 m/s</span></div>
+        <div class="row"><span class="label">${ICONS.load} náklad</span><span class="value" id="load">0 %</span></div>
+        <div class="row"><span class="label">${ICONS.rope} lano</span><span class="value" id="rope">3 m</span></div>
+      </div>
+      <div id="topbar-left">
+        <div id="target" class="panel">
+          <svg id="targetArrow" viewBox="0 0 24 24"><path d="M12 2l6 18-6-4-6 4z"/></svg>
+          <span id="targetText">—</span>
+        </div>
+        <div id="clock" class="panel" style="padding:8px 14px;">18:24</div>
+      </div>
+      <div id="radio"></div>
+      <div id="prompt" class="panel"></div>
+      <div id="reticle"></div>
+      <div id="stickDot"></div>
+      <div id="stickRing"></div>
+      <div id="warnings"></div>
+      <div id="msg"></div>
+      <div id="telemetry" class="panel"></div>
+      <div id="help" class="panel"></div>
+
+      <div id="startOverlay" class="overlay">
+        <div class="card panel">
+          <h1>ROTOR <span>LOGGER</span></h1>
+          <p class="dim">Klidný večerní letový simulátor — vrtulníková těžba dřeva. Převážej pokácené kmeny
+          z těžební oblasti na odkládací plochu (vlaječka) pomocí podvěšeného navijáku.</p>
+          <div class="controls-grid">
+            <span class="k">myš = cyklika (vzdálenost od středu = náklon)</span><span>W/S kolektiv · A/D pedály</span>
+            <span class="k">R/V naviják (vysunout/zatáhnout)</span><span>mezerník hák (chytit/pustit)</span>
+            <span class="k">E studený start motoru · T test výpadku</span><span>C trim · X kamera · pravé tlačítko rozhled</span>
+            <span class="k">F1 nápověda · F3 telemetrie · F5 uložit · M zvuk</span><span>G Assist/Real</span>
+          </div>
+          <div class="settings">
+            <label><input type="checkbox" id="setAssist" /> Assist (gyro hover, měkké přistání)</label>
+            <label><input type="checkbox" id="setInvertY" /> invertovat myš Y</label>
+            <label>expo <input type="range" id="setExpo" min="0" max="0.5" step="0.05" /></label>
+            <label>citlivost <input type="range" id="setSens" min="0.4" max="2" step="0.05" /></label>
+          </div>
+          <p class="dim" id="saveInfo"></p>
+          <button id="startBtn">Nastoupit do stroje</button>
+        </div>
+      </div>
+
+      <div id="reportOverlay" class="overlay hidden">
+        <div class="card panel" id="report"></div>
+      </div>
+
+      <div id="pauseOverlay" class="overlay hidden">
+        <div class="card panel">
+          <h2>Pauza</h2>
+          <p class="dim">Esc — zpět do hry. Nastavení se ukládají automaticky.</p>
+          <button id="resumeBtn">Pokračovat</button>
+        </div>
+      </div>
+    `;
+    const ids = ['stats', 'nr', 'coll', 'agl', 'spd', 'load', 'rope', 'target', 'targetArrow', 'targetText', 'clock',
+      'radio', 'prompt', 'reticle', 'stickDot', 'stickRing', 'warnings', 'msg', 'telemetry', 'help',
+      'startOverlay', 'reportOverlay', 'report', 'pauseOverlay', 'startBtn', 'resumeBtn', 'saveInfo',
+      'setAssist', 'setInvertY', 'setExpo', 'setSens'];
+    this.el = {};
+    for (const id of ids) this.el[id] = ui.querySelector('#' + id) as HTMLElement;
+    this.buildHelp();
+  }
+
+  private buildHelp(): void {
+    this.el.help.innerHTML = `
+      <b>Nápověda (F1)</b><br>
+      <span class="kbd">myš</span> cyklika — čím dál od středu, tím větší náklon<br>
+      <span class="kbd">W</span>/<span class="kbd">S</span> kolektiv (více/méně vztlaku), kolečko myši<br>
+      <span class="kbd">A</span>/<span class="kbd">D</span> pedály (Q/E), <span class="kbd">C</span> trim<br>
+      <span class="kbd">R</span>/<span class="kbd">V</span> naviják vysunout/zatáhnout (max 40 m)<br>
+      <span class="kbd">mezerník</span> zajistit/uvolnit hák u kmene<br>
+      <span class="kbd">E</span> start/vypnutí motoru, <span class="kbd">T</span> test výpadku<br>
+      <span class="kbd">X</span> přepnout kameru, držet <span class="kbd">Pravé tlačítko</span> = volný rozhled<br>
+      <span class="kbd">F3</span> telemetrie, <span class="kbd">F5</span> uložit, <span class="kbd">M</span> zvuk, <span class="kbd">G</span> Assist<br>
+      <span class="kbd">Esc</span> pauza`;
+  }
+
+  bindStart(settings: ControlSettings, money: number, shift: number, onStart: () => void): void {
+    const assist = this.el.setAssist as HTMLInputElement;
+    const invert = this.el.setInvertY as HTMLInputElement;
+    const expo = this.el.setExpo as HTMLInputElement;
+    const sens = this.el.setSens as HTMLInputElement;
+    assist.checked = settings.assist;
+    invert.checked = settings.invertY;
+    expo.value = String(settings.expo);
+    sens.value = String(settings.sensitivity);
+    this.el.saveInfo.textContent = money > 0 ? `Uloženo: ${Math.round(money)} Kč, směna č. ${shift}` : 'Nová hra — seed světa v config.ts.';
+    const sync = () => {
+      settings.assist = assist.checked;
+      settings.invertY = invert.checked;
+      settings.expo = parseFloat(expo.value);
+      settings.sensitivity = parseFloat(sens.value);
+    };
+    for (const el of [assist, invert, expo, sens]) el.addEventListener('input', sync);
+    this.el.startBtn.addEventListener('click', () => {
+      sync();
+      onStart();
+    });
+    this.el.resumeBtn.addEventListener('click', () => this.showPause(false));
+  }
+
+  hideStart(): void {
+    this.el.startOverlay.classList.add('hidden');
+  }
+
+  showPause(v: boolean): void {
+    this.el.pauseOverlay.classList.toggle('hidden', !v);
+  }
+
+  setRunning(v: boolean): void {
+    this.el.startOverlay.classList.toggle('hidden', v);
+  }
+
+  update(
+    tel: FlightTelemetry,
+    collective: number,
+    loadFrac: number,
+    ropeLen: number,
+    stick: { x: number; y: number },
+    stickRadiusPx: number,
+    mission: Mission,
+    targetBearing: number | null,
+    targetDist: number,
+    targetLabel: string,
+    hour: number,
+    minute: number,
+    warnings: string[],
+    prompt: string | null,
+  ): void {
+    const nr = tel.omegaFrac * 100;
+    const nrEl = this.el.nr;
+    nrEl.textContent = `${nr.toFixed(0)} %`;
+    nrEl.classList.toggle('warn', tel.rotorLow);
+    this.el.coll.textContent = `${Math.round(collective * 100)} %`;
+    this.el.agl.textContent = `${tel.agl.toFixed(1)} m`;
+    this.el.spd.textContent = `${tel.airspeed.toFixed(0)} m/s`;
+    this.el.load.textContent = `${Math.round(loadFrac * 100)} %`;
+    this.el.rope.textContent = `${ropeLen.toFixed(1)} m`;
+
+    // cíl + kompasová značka
+    const arrow = this.el.targetArrow as unknown as SVGElement;
+    if (targetBearing === null) {
+      this.el.targetText.textContent = '—';
+      arrow.style.transform = 'rotate(0deg)';
+    } else {
+      arrow.style.transform = `rotate(${(-targetBearing * 180 / Math.PI).toFixed(1)}deg)`;
+      this.el.targetText.textContent = `${targetLabel} · ${targetDist.toFixed(0)} m`;
+    }
+    this.el.clock.textContent = `${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor(minute)).padStart(2, '0')}`;
+
+    // radiogramy
+    const radio = this.el.radio;
+    const msgs = mission.radio.slice(-3);
+    radio.innerHTML = msgs.map((m) => `<div class="radio-msg panel"><span class="who">Věž</span><br>${m.text}</div>`).join('');
+
+    // výzva
+    const p = this.el.prompt;
+    if (prompt) { p.style.display = 'block'; p.innerHTML = prompt; } else p.style.display = 'none';
+
+    // retikl virtuální páky
+    const dot = this.el.stickDot;
+    dot.style.transform = `translate(calc(-50% + ${stick.x * stickRadiusPx}px), calc(-50% + ${-stick.y * stickRadiusPx}px))`;
+    const ring = this.el.stickRing;
+    ring.style.width = `${stickRadiusPx * 2}px`;
+    ring.style.height = `${stickRadiusPx * 2}px`;
+
+    // varování
+    const w = this.el.warnings;
+    const cur = warnings.join('|');
+    if (w.dataset.cur !== cur) {
+      w.dataset.cur = cur;
+      w.innerHTML = warnings.map((x) => `<div class="warn">${x}</div>`).join('');
+    }
+  }
+
+  message(text: string, ms = 3500): void {
+    const m = this.el.msg;
+    m.textContent = text;
+    m.style.display = 'block';
+    window.clearTimeout((m as unknown as { _t?: number })._t);
+    (m as unknown as { _t?: number })._t = window.setTimeout(() => { m.style.display = 'none'; }, ms);
+  }
+
+  setTelemetry(visible: boolean, text: string): void {
+    const t = this.el.telemetry;
+    t.style.display = visible ? 'block' : 'none';
+    if (visible) t.textContent = text;
+  }
+
+  setHelp(visible: boolean): void {
+    this.el.help.style.display = visible ? 'block' : 'none';
+  }
+
+  showReport(report: ShiftReport | null): void {
+    const ov = this.el.reportOverlay;
+    if (!report) { ov.classList.add('hidden'); return; }
+    ov.classList.remove('hidden');
+    const crosses = '✚'.repeat(report.crosses) + '<span style="opacity:0.25">' + '✚'.repeat(3 - report.crosses) + '</span>';
+    this.el.report.innerHTML = `
+      <h2>Pilotní poznámky — směna č. ${report.shift}</h2>
+      <p class="dim">Doručeno ${report.delivered}/${report.total} kmenů · odměna ${report.moneyEarned} Kč</p>
+      <p class="crosses">${crosses}</p>
+      <ul>${report.notes.map((n) => `<li>${n}</li>`).join('')}</ul>
+      <p class="dim">Plynulost ${(report.smoothness * 100) | 0} % · přesnost ${(report.accuracy * 100) | 0} % · bezpečnost ${(report.safety * 100) | 0} %</p>
+      <button id="nextShiftBtn">Další směna (Enter)</button>`;
+    const btn = this.el.report.querySelector('#nextShiftBtn') as HTMLButtonElement;
+    btn.addEventListener('click', () => {
+      ov.classList.add('hidden');
+      this.onNextShift?.();
+    });
+  }
+
+  onNextShift: (() => void) | null = null;
+}
