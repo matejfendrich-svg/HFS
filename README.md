@@ -48,14 +48,16 @@ náklon), klávesy jsou kolektiv a pedály.
 | myš | cyklika — čím dál od středu, tím větší náklon (myš nahoru = příď dolů, lze invertovat) |
 | `W` / `S` (nebo kolečko myši) | kolektiv — více / méně vztlaku |
 | `A` / `D` (alt. `Q` / `E`) | pedály (zatáčení) |
-| `R` / `V` | naviják — vysunout / zatáhnout lano (3–40 m, 2 m/s) |
+| `R` / `V` (nebo `Shift`+kolečko) | naviják — vysunout / zatáhnout lano (3–40 m, 2 m/s) |
 | `mezerník` | zajistit / uvolnit hák u kmene |
 | `E` | studený start motoru (startér → zážeh → náběh) / vypnutí |
 | `T` | testovací výpadek motoru (autorotace) |
 | `C` | trim — aktuální výchylka myši se stane nulou |
 | `X` | přepnout kameru (chase / kokpit / shora / z boku) |
 | pravé tlačítko myši (držet) | volný rozhled |
-| `G` | režim Assist (gyro hover, měkké přistání) / Real |
+| `O` | **panel nastavení**: čas dne (auto/den/soumrak/noc), vítr (bez/mírný/silný), **bouřka** (poryvy + liják + blesky), test režim, režim letu |
+| `P` | cyklovat režim letu: **Stabilizovaný** (DJI-like: tlumení, auto-level, méně kmitání) → **Hover** (držení pozice a výšky) → **Autopilot** (let na cíl mise) → **Manual** (plný realismus) |
+| `G` | režim Assist (měkké přistání) / Real |
 | `F1` / `F3` / `F5` | nápověda / telemetrie / rychlé uložení |
 | `M` | ztlumit zvuk · `Esc` pauza · `Enter` další směna po zprávě |
 

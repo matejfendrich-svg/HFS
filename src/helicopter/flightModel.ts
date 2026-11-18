@@ -10,7 +10,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { PHYSICS, CONTROLS, type HeliTypeConfig } from '../config';
+import { PHYSICS, CONTROLS, GAMEPLAY, type HeliTypeConfig, type FlightMode } from '../config';
 import { clamp, lerp, smoothstep, wrapAngle, DEG } from '../utils/math';
 import type { TreeInstance } from '../world/terrain';
 
@@ -30,7 +30,8 @@ export interface FlightEnv {
   heightAt: (x: number, z: number) => number;
   treesNear: (x: number, z: number, r: number) => TreeInstance[];
   time: number;             // herní čas [s] (turbulence)
-  assist: boolean;          // režim "Assist"
+  assist: boolean;          // režim "Assist" (měkké přistání)
+  mode: FlightMode;         // letový režim: manual / stabilized / hover / autopilot
   attachForce: THREE.Vector3; // síla lana na závěsný bod (world) — nastaví ropeSim
   loadMass: number;         // hmotnost nákladu [kg] (0 = bez nákladu)
 }
@@ -297,6 +298,14 @@ export class FlightModel {
       const cdA = t.dragCdA + (env.loadMass > 0 ? t.loadDragCdA : 0);
       F.addScaledVector(vAir, -0.5 * rho * cdA * V); // D = ½ρv²C_D·A ve směru −v
     }
+    // stabilizované režimy (DJI-like): útlum vodorovné rychlosti při zavěšení („přibitý“ let)
+    const horizDamp = env.mode === 'hover' ? GAMEPLAY.hover.horizDamp
+      : env.mode === 'stabilized' ? GAMEPLAY.stabilized.horizDamp
+      : env.mode === 'autopilot' ? 0.4 : 0;
+    if (horizDamp > 0) {
+      F.x -= this.vel.x * m * horizDamp;
+      F.z -= this.vel.z * m * horizDamp;
+    }
     // ocasní rotor: příčná síla + kompenzace reaktivního momentu (5.1)
     const right = this.right(new THREE.Vector3());
     const tailForce = this.pedal * 15000;
@@ -312,19 +321,23 @@ export class FlightModel {
     const authority = 1 - P.retreatingStall.maxAuthorityLoss * smoothstep(P.retreatingStall.start, P.retreatingStall.full, V);
     let tgtPitch = clamp(input.targetPitch, -A.maxPitchDeg * DEG, A.maxPitchDeg * DEG) * authority;
     let tgtRollE = clamp(-input.targetRoll, -A.maxRollDeg * DEG, A.maxRollDeg * DEG) * authority; // euler roll: + vlevo
-    if (env.assist) {
-      // Assist: gyro drží hover při neutrální páce (volitelný režim, oddíl 5.4)
-      if (Math.abs(input.targetPitch) < 0.02 && Math.abs(input.targetRoll) < 0.02) {
-        tgtPitch = dampAngle(tgtPitch, 0, 2.0, dt);
-        tgtRollE = dampAngle(tgtRollE, 0, 2.0, dt);
-      }
+    // stabilizované režimy: při neutrální páce gyro vrací stroj do vodorovné polohy
+    // (režimy „stabilized“/„hover“/„autopilot“; v „manual“ jen volitelný Assist)
+    const autoLevel = env.mode !== 'manual' || env.assist;
+    const deadband = env.mode === 'hover' || env.mode === 'autopilot'
+      ? GAMEPLAY.hover.autoLevelDeadband : GAMEPLAY.stabilized.autoLevelDeadband;
+    if (autoLevel && Math.abs(input.targetPitch) < deadband && Math.abs(input.targetRoll) < deadband) {
+      tgtPitch = dampAngle(tgtPitch, 0, 3.5, dt);
+      tgtRollE = dampAngle(tgtRollE, 0, 3.5, dt);
     }
+    // vyšší tlumení náklonu ve stabilizovaných režimech (méně „klepání“)
+    const kD = A.kD * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kDMultiplier : GAMEPLAY.stabilized.kDMultiplier));
     // vnější moment od lana na závěsném bodě (7.6) — kyvadlový efekt nákladu
     const rAttach = new THREE.Vector3(0, t.attachOffsetY, 0).applyQuaternion(this.quaternion());
     const M = new THREE.Vector3().crossVectors(rAttach, this.attachForce);
     const Mbody = M.applyQuaternion(this.q.clone().invert());
-    let pitchAcc = A.kP * wrapAngle(tgtPitch - this.pitch) - A.kD * this.pitchRate + Mbody.x / t.inertia.x;
-    let rollAcc = A.kP * wrapAngle(tgtRollE - this.roll) - A.kD * this.rollRate + Mbody.z / t.inertia.z;
+    let pitchAcc = A.kP * wrapAngle(tgtPitch - this.pitch) - kD * this.pitchRate + Mbody.x / t.inertia.x;
+    let rollAcc = A.kP * wrapAngle(tgtRollE - this.roll) - kD * this.rollRate + Mbody.z / t.inertia.z;
     this.pitchRate = clamp(this.pitchRate + pitchAcc * dt, -A.maxPitchRateDegS * DEG, A.maxPitchRateDegS * DEG);
     this.rollRate = clamp(this.rollRate + rollAcc * dt, -A.maxRollRateDegS * DEG, A.maxRollRateDegS * DEG);
     this.pitch = clamp(this.pitch + this.pitchRate * dt, -A.maxPitchDeg * DEG, A.maxPitchDeg * DEG);
@@ -368,8 +381,9 @@ export class FlightModel {
     // terén pod trupem (koule kolem těžiště + spodní část trupu)
     const h = env.heightAt(this.pos.x, this.pos.z);
     const bottomOffset = 2.7; // nejnižší bod trupu/podvozku pod těžištěm
-    // "Assist": změkčené přistání — těsně nad zemí omezí rychlost sestupu (5.4)
-    if (env.assist && this.pos.y - h < 3 && this.vel.y < -2) this.vel.y = -2;
+    // stabilizované režimy / Assist: změkčené přistání — těsně nad zemí omezí sestup (5.4)
+    const softLand = env.assist || env.mode !== 'manual';
+    if (softLand && this.pos.y - h < 3 && this.vel.y < -2) this.vel.y = -2;
     let onGround = false;
     if (this.pos.y - bottomOffset < h) {
       const impact = -this.vel.y;

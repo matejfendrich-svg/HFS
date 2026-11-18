@@ -4,7 +4,7 @@
 // výchylka virtuální páky (kritéria 6.7a–d). Klávesy: kolektiv W/S, pedály A/D.
 // ============================================================================
 
-import { CONTROLS, SETTINGS_DEFAULTS } from '../config';
+import { CONTROLS, GAMEPLAY, SETTINGS_DEFAULTS, type TimeOfDayPreset, type FlightMode } from '../config';
 import { clamp, expoCurve, deadZone, DEG } from '../utils/math';
 
 export interface ControlSettings {
@@ -13,6 +13,11 @@ export interface ControlSettings {
   expo: number;
   sensitivity: number;
   muted: boolean;
+  timeOfDay: TimeOfDayPreset;  // den/noc/soumrak/auto cyklus
+  windLevel: number;            // index do WEATHER.windLevels
+  storm: boolean;               // bouřka
+  testMode: boolean;            // test režim (telemetrie, výpadek motoru)
+  mode: FlightMode;             // manual / stabilized / hover / autopilot
 }
 
 export interface ControlOutput {
@@ -33,6 +38,8 @@ export interface ControlOutput {
   savePressed: boolean;
   pausePressed: boolean;
   nextShiftPressed: boolean;
+  settingsPressed: boolean;   // O — panel nastavení
+  modeCyclePressed: boolean;  // P — cyklus letových režimů
   anyKey: boolean;
 }
 
@@ -60,6 +67,7 @@ export class Controls {
   private canvas: HTMLElement;
   private pointerLocked = false;
   private wheelCollective = 0;
+  private wheelWinch = 0;
   private lockedAccum = { x: 0, y: 0 };
   // při držení pravého tlačítka se myš věnuje volnému rozhledu místo páce
   readonly freeDelta = { x: 0, y: 0 };
@@ -113,7 +121,12 @@ export class Controls {
     });
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.wheelCollective = clamp(this.wheelCollective + (e.deltaY < 0 ? 0.06 : -0.06), -1, 1);
+      const step = e.deltaY < 0 ? 0.06 : -0.06;
+      if (e.shiftKey && GAMEPLAY.wheelWinchWithShift) {
+        this.wheelWinch = clamp(this.wheelWinch + step, -1, 1); // Shift + kolečko = naviják
+      } else {
+        this.wheelCollective = clamp(this.wheelCollective + step, -1, 1);
+      }
     }, { passive: false });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -182,7 +195,8 @@ export class Controls {
     const pedal = (this.isDown(K.pedalLeft) || this.isDown(K.pedalLeftAlt) ? 1 : 0)
       + (this.isDown(K.pedalRight) || this.isDown(K.pedalRightAlt) ? -1 : 0);
 
-    const winch = (this.isDown(K.winchOut) ? 1 : 0) + (this.isDown(K.winchIn) ? -1 : 0);
+    const winch = (this.isDown(K.winchOut) ? 1 : 0) + (this.isDown(K.winchIn) ? -1 : 0) + this.wheelWinch;
+    this.wheelWinch *= 0.9; // kolečko je impulzní
 
     const out: ControlOutput = {
       targetPitch,
@@ -202,6 +216,8 @@ export class Controls {
       savePressed: this.anyPressed(K.quickSave),
       pausePressed: this.anyPressed(K.pause),
       nextShiftPressed: this.anyPressed(K.nextShift),
+      settingsPressed: this.anyPressed(K.settings),
+      modeCyclePressed: this.anyPressed(K.modeCycle),
       anyKey: this.pressed.size > 0,
     };
     // trim (C): aktuální výchylka myši se stane novým nulovým bodem

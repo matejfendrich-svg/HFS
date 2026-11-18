@@ -53,3 +53,23 @@ v `src/config.ts`.
 15. **Výkon:** terén 144² buněk (flat shading), ~6 500 stromů ve 3 druzích × 2
     instancované sady, stíny jen v boxu 160 m kolem vrtulníku (2048 px). Cíl 60 fps
     na průměrném notebooku; fyzika běží na fixním kroku 120 Hz nezávisle na fps.
+16. **Letové režimy (požadavek zadavatele):** výchozí režim je `stabilized`
+    (DJI Mavic-like: vyšší tlumení náklonu, auto-level při neutrální páce, útlum
+    vodorovné rychlosti, méně vizuálního chvění) — `manual` zůstává plně realistický
+    (setrvačnost, bez útlumu). `hover` drží pozici a výšku, `autopilot` letí sám na cíl
+    mise (kmen / odkládací plocha) jednoduchým P-regulátorem a u cíle přejde do hoveru.
+    Režim se cykluje klávesou P nebo volí v panelu nastavení (O).
+17. **Nastavení „témat“ (O):** čas dne (auto cyklus / den / soumrak / noc — přepíše
+    herní hodiny), vítr (3 úrovně násobící základní vítr), bouřka (3,2× poryvy, liják
+    jako částice kolem kamery, náhodné blesky se zábleskem světla, tmavší mlha, 2,5×
+    turbulence), test režim (zapne telemetrii F3). Vše se ukládá do localStorage.
+18. **Ovládání lana:** kromě R/V také `Shift` + kolečko myši (impulzní), délka lana
+    je trvale v HUD; hák ovládáš mezerníkem (chycení do 1,5 m pod vrtulníkem).
+19. **Detailnější model:** příhradovina kostry z 8 na 14 polí se střídavými
+    diagonálami, detaily motorů (sání, tryska, potrubí), rotorová hlava (talíř +
+    táhla), panely dveří, pitot, anténa, zrcátka, pouzdro navijáku, poziční světla
+    (červená/zelená/bílá + blikající maják, viditelnější v noci). Počet trojúhelníků
+    se loguje do konzole a respektuje limit 5 000 (`RENDER.heliMaxTris`).
+20. **Hratelný single-file build je commitnutý v kořeni repozitáře jako
+    `rotor-logger.html`** (stejně jako u FSS — celá hra v jednom HTML přímo v repo).
+    `npm run pack` ho po buildu aktualizuje; `dist/` zůstává v .gitignore.

@@ -109,6 +109,11 @@
     .settings { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 12px 0; font-size: 13px; }
     .settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
     .settings input[type="range"] { width: 110px; accent-color: var(--accent); }
+    select {
+      pointer-events: auto; background: rgba(255,255,255,0.1); color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 8px; padding: 5px 10px; font-size: 13px;
+    }
+    select option { background: #16202a; color: var(--text); }
     #report .crosses { font-size: 26px; color: var(--accent); letter-spacing: 0.2em; }
     #report ul { margin: 8px 0 8px 18px; font-size: 14px; line-height: 1.55; }
     #telemetry {

@@ -37,12 +37,14 @@ export class Hud {
         <div class="row"><span class="label">${ICONS.speed} rychlost</span><span class="value" id="spd">0 m/s</span></div>
         <div class="row"><span class="label">${ICONS.load} náklad</span><span class="value" id="load">0 %</span></div>
         <div class="row"><span class="label">${ICONS.rope} lano</span><span class="value" id="rope">3 m</span></div>
+        <div style="grid-column: 1 / span 2; color: var(--dim); font-size: 11px; margin-top: 4px;">lano: <span class="kbd">R</span>/<span class="kbd">V</span> nebo <span class="kbd">Shift</span>+kolečko · hák: <span class="kbd">mezerník</span> · nastavení: <span class="kbd">O</span> · režim: <span class="kbd">P</span></div>
       </div>
       <div id="topbar-left">
         <div id="target" class="panel">
           <svg id="targetArrow" viewBox="0 0 24 24"><path d="M12 2l6 18-6-4-6 4z"/></svg>
           <span id="targetText">—</span>
         </div>
+        <div id="modeBadge" class="panel" style="padding:8px 14px; font-size:12px; font-weight:700; color:var(--accent);">STABILIZOVANÝ</div>
         <div id="clock" class="panel" style="padding:8px 14px;">18:24</div>
       </div>
       <div id="radio"></div>
@@ -86,13 +88,50 @@ export class Hud {
           <h2>Pauza</h2>
           <p class="dim">Esc — zpět do hry. Nastavení se ukládají automaticky.</p>
           <button id="resumeBtn">Pokračovat</button>
+          <button id="openSettingsBtn" class="secondary">Nastavení (O)</button>
+        </div>
+      </div>
+
+      <div id="settingsOverlay" class="overlay hidden">
+        <div class="card panel">
+          <h2>Nastavení</h2>
+          <div class="settings" style="flex-direction: column; align-items: stretch; gap: 12px;">
+            <label style="justify-content: space-between;">Čas dne
+              <select id="setTime">
+                <option value="auto">Auto (cyklus dne)</option>
+                <option value="day">Den</option>
+                <option value="dusk">Večer/soumrak</option>
+                <option value="night">Noc</option>
+              </select>
+            </label>
+            <label style="justify-content: space-between;">Vítr
+              <select id="setWind">
+                <option value="0">Bez větru</option>
+                <option value="1">Mírný</option>
+                <option value="2">Silný</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="setStorm" /> Bouřka (poryvy, liják, blesky)</label>
+            <label><input type="checkbox" id="setTest" /> Test režim (telemetrie F3, výpadek motoru T)</label>
+            <label style="justify-content: space-between;">Režim letu
+              <select id="setMode">
+                <option value="stabilized">Stabilizovaný (DJI-like)</option>
+                <option value="hover">Hover (držení pozice)</option>
+                <option value="autopilot">Autopilot (let na cíl)</option>
+                <option value="manual">Manual (plný realismus)</option>
+              </select>
+            </label>
+          </div>
+          <p class="dim">Režim letu lze rychle cyklovat klávesou <span class="kbd">P</span>. Nastavení se ukládají automaticky.</p>
+          <button id="closeSettingsBtn">Zavřít (O)</button>
         </div>
       </div>
     `;
     const ids = ['stats', 'nr', 'coll', 'agl', 'spd', 'load', 'rope', 'target', 'targetArrow', 'targetText', 'clock',
       'radio', 'prompt', 'reticle', 'stickDot', 'stickRing', 'warnings', 'msg', 'telemetry', 'help',
       'startOverlay', 'reportOverlay', 'report', 'pauseOverlay', 'startBtn', 'resumeBtn', 'saveInfo',
-      'setAssist', 'setInvertY', 'setExpo', 'setSens'];
+      'setAssist', 'setInvertY', 'setExpo', 'setSens', 'modeBadge',
+      'settingsOverlay', 'setTime', 'setWind', 'setStorm', 'setTest', 'setMode', 'closeSettingsBtn', 'openSettingsBtn'];
     this.el = {};
     for (const id of ids) this.el[id] = ui.querySelector('#' + id) as HTMLElement;
     this.buildHelp();
@@ -104,11 +143,12 @@ export class Hud {
       <span class="kbd">myš</span> cyklika — čím dál od středu, tím větší náklon<br>
       <span class="kbd">W</span>/<span class="kbd">S</span> kolektiv (více/méně vztlaku), kolečko myši<br>
       <span class="kbd">A</span>/<span class="kbd">D</span> pedály (Q/E), <span class="kbd">C</span> trim<br>
-      <span class="kbd">R</span>/<span class="kbd">V</span> naviják vysunout/zatáhnout (max 40 m)<br>
+      <span class="kbd">R</span>/<span class="kbd">V</span> naviják vysunout/zatáhnout (max 40 m), <span class="kbd">Shift</span>+kolečko také<br>
       <span class="kbd">mezerník</span> zajistit/uvolnit hák u kmene<br>
       <span class="kbd">E</span> start/vypnutí motoru, <span class="kbd">T</span> test výpadku<br>
       <span class="kbd">X</span> přepnout kameru, držet <span class="kbd">Pravé tlačítko</span> = volný rozhled<br>
       <span class="kbd">F3</span> telemetrie, <span class="kbd">F5</span> uložit, <span class="kbd">M</span> zvuk, <span class="kbd">G</span> Assist<br>
+      <span class="kbd">O</span> nastavení (čas dne, vítr, bouřka, test, režim letu), <span class="kbd">P</span> režim letu<br>
       <span class="kbd">Esc</span> pauza`;
   }
 
@@ -245,6 +285,46 @@ export class Hud {
       ov.classList.add('hidden');
       this.onNextShift?.();
     });
+  }
+
+  // Panel nastavení (klávesa O): „témata“ — čas dne, vítr, bouřka, test, režim letu.
+  bindSettingsPanel(settings: ControlSettings, onChange: () => void): void {
+    const time = this.el.setTime as HTMLSelectElement;
+    const wind = this.el.setWind as HTMLSelectElement;
+    const storm = this.el.setStorm as HTMLInputElement;
+    const test = this.el.setTest as HTMLInputElement;
+    const mode = this.el.setMode as HTMLSelectElement;
+    const sync = () => {
+      settings.timeOfDay = time.value as ControlSettings['timeOfDay'];
+      settings.windLevel = parseInt(wind.value, 10);
+      settings.storm = storm.checked;
+      settings.testMode = test.checked;
+      settings.mode = mode.value as ControlSettings['mode'];
+      onChange();
+    };
+    const reflect = () => {
+      time.value = settings.timeOfDay;
+      wind.value = String(settings.windLevel);
+      storm.checked = settings.storm;
+      test.checked = settings.testMode;
+      mode.value = settings.mode;
+    };
+    for (const el of [time, wind, storm, test, mode]) el.addEventListener('change', sync);
+    this.el.closeSettingsBtn.addEventListener('click', () => this.showSettings(false));
+    this.el.openSettingsBtn.addEventListener('click', () => { this.showPause(false); this.showSettings(true); });
+    reflect();
+    this._reflectSettings = reflect;
+  }
+
+  private _reflectSettings: (() => void) | null = null;
+
+  showSettings(v: boolean): void {
+    this.el.settingsOverlay.classList.toggle('hidden', !v);
+    if (v && this._reflectSettings) this._reflectSettings();
+  }
+
+  setModeBadge(text: string): void {
+    if (this.el.modeBadge.textContent !== text) this.el.modeBadge.textContent = text;
   }
 
   onNextShift: (() => void) | null = null;

@@ -33,6 +33,9 @@ export class HeliModel {
   tailBlurDisk!: THREE.Mesh;
   winchDrum!: THREE.Mesh;             // cívka navijáku na břiše
   hookMarker!: THREE.Mesh;
+  navLights: THREE.Mesh[] = [];       // poziční světla (blikají)
+  beacon!: THREE.Mesh;                // antikolizní maják na střeše
+  triCount = 0;
   private rotorAngle = 0;
   private tailAngle = 0;
   private omegaNom: number;
@@ -72,8 +75,8 @@ export class HeliModel {
         g.add(lon);
       }
     }
-    // příčky a diagonály kostry
-    const nBays = 8;
+    // příčky a střídavé diagonály kostry (detailnější příhradovina)
+    const nBays = 14;
     for (let i = 0; i <= nBays; i++) {
       const z = spineZ0 + (spineLen * i) / nBays;
       g.add(box(2 * hw + 0.14, 0.1, 0.1, steel, 0, 0.6 + hh, z));
@@ -83,15 +86,18 @@ export class HeliModel {
       if (i < nBays) {
         const z2 = spineZ0 + (spineLen * (i + 1)) / nBays;
         const diag = box(0.08, Math.hypot(2 * hh, (z2 - z)), 0.08, steel, 0, 0.6, (z + z2) / 2);
-        diag.rotation.x = Math.atan2(2 * hh, z2 - z);
+        diag.rotation.x = (i % 2 === 0 ? 1 : -1) * Math.atan2(2 * hh, z2 - z);
         g.add(diag);
+        // vodorovná podélná výztuha uprostřed
+        g.add(box(0.07, 0.07, z2 - z, steel, -hw * 0.55, 0.6, (z + z2) / 2));
+        g.add(box(0.07, 0.07, z2 - z, steel, hw * 0.55, 0.6, (z + z2) / 2));
       }
     }
     // bílé krycí panely na bocích kostry (jen částečné — kostra zůstává otevřená)
     g.add(box(0.06, 0.9, spineLen * 0.55, white, -hw - 0.02, 0.85, spineZc));
     g.add(box(0.06, 0.9, spineLen * 0.55, white, hw + 0.02, 0.85, spineZc));
 
-    // --- dva odkryté turbínové motory nad trupem ---
+    // --- dva odkryté turbínové motory nad trupem (s detaily) ---
     for (const sx of [-1.35, 1.35]) {
       const eng = cyl(0.55, 0.62, 3.2, dark, 12);
       eng.rotation.x = Math.PI / 2;
@@ -101,14 +107,30 @@ export class HeliModel {
       intake.rotation.x = Math.PI / 2;
       intake.position.set(sx, 2.15, -5.35);
       g.add(intake);
+      const intakeRing = cyl(0.52, 0.52, 0.12, dark, 12); // límec sání
+      intakeRing.rotation.x = Math.PI / 2;
+      intakeRing.position.set(sx, 2.15, -5.78);
+      g.add(intakeRing);
       const exhaust = cyl(0.42, 0.34, 0.8, dark, 10);
       exhaust.rotation.x = Math.PI / 2;
       exhaust.position.set(sx, 2.15, -1.95);
       g.add(exhaust);
-      // bílý kryt převodovky mezi motory
+      const nozzle = cyl(0.3, 0.42, 0.35, steel, 10); // tryska
+      nozzle.rotation.x = Math.PI / 2;
+      nozzle.position.set(sx, 2.15, -1.55);
+      g.add(nozzle);
+      // palivové potrubí podél motoru
+      const pipe = cyl(0.05, 0.05, 2.6, steel, 6);
+      pipe.rotation.x = Math.PI / 2;
+      pipe.position.set(sx + 0.45, 1.62, -3.6);
+      g.add(pipe);
     }
     const gearbox = box(1.7, 0.9, 2.4, white, 0, 2.3, -3.4);
     g.add(gearbox);
+    // rotorový stožár kryt převodovky + hřídel
+    const mastBase = cyl(0.5, 0.7, 0.8, white, 10);
+    mastBase.position.set(0, 1.9, -1.0);
+    g.add(mastBase);
 
     // --- hlavní rotor: stožár + 6 úzkých listů ---
     const hubY = type.hubHeight;
@@ -130,6 +152,15 @@ export class HeliModel {
     const hubCap = cyl(0.5, 0.5, 0.3, orange, 10);
     hubCap.position.y = -0.1;
     this.rotorGroup.add(hubCap);
+    // detail rotorové hlavy: talíř (swashplate) + táhla k listům
+    const swash = cyl(0.34, 0.34, 0.1, steel, 10);
+    swash.position.y = -0.22;
+    this.rotorGroup.add(swash);
+    for (let i = 0; i < type.rotorBlades; i++) {
+      const a = (i / type.rotorBlades) * Math.PI * 2;
+      const link = box(0.05, 0.3, 0.05, steel, Math.cos(a) * 0.42, -0.34, Math.sin(a) * 0.42);
+      this.rotorGroup.add(link);
+    }
     // rozostřená stopa listů (viditelná při vysokých otáčkách, oddíl 15)
     const blurGeo = new THREE.CircleGeometry(type.rotorDiameter / 2, 40);
     blurGeo.rotateX(-Math.PI / 2);
@@ -207,10 +238,60 @@ export class HeliModel {
     g.add(box(0.08, 1.0, 1.1, dark, -0.62, 0.0, lmZ));
     g.add(box(0.08, 1.0, 1.1, dark, 0.62, 0.0, lmZ));
     g.add(box(0.7, 0.5, 0.06, glass, 0, 0.35, lmZ - 0.5)); // malé čelní sklo
+    g.add(box(0.5, 0.3, 0.4, dark, 0.35, -0.3, lmZ - 0.2)); // konzole
+
+    // --- detaily gondoly: panely, klika, pitot, anténa ---
+    g.add(box(3.42, 0.06, 2.2, dark, 0, 0.62, -L / 2 + 3.0));   // horní lem kabiny
+    g.add(box(0.06, 1.6, 1.8, dark, -1.71, -0.1, -L / 2 + 2.8)); // obrys dveří vlevo
+    g.add(box(0.06, 1.6, 1.8, dark, 1.71, -0.1, -L / 2 + 2.8));
+    const pitot = cyl(0.03, 0.03, 0.9, steel, 6);
+    pitot.rotation.x = Math.PI / 2;
+    pitot.position.set(0.9, -0.5, -L / 2 - 0.35);
+    g.add(pitot);
+    const antenna = cyl(0.02, 0.02, 0.7, dark, 5);
+    antenna.position.set(-0.6, 1.05, -L / 2 + 4.2);
+    g.add(antenna);
+    // zrcátka
+    g.add(box(0.16, 0.12, 0.04, dark, -1.85, 0.75, -L / 2 + 1.6));
+    g.add(box(0.16, 0.12, 0.04, dark, 1.85, 0.75, -L / 2 + 1.6));
+
+    // --- pouzdro navijáku + vodicí kladka lana pod břichem ---
+    g.add(box(1.1, 0.5, 1.6, orange, 0, type.attachOffsetY + 0.62, -0.5));
+    const guide = cyl(0.12, 0.12, 0.3, steel, 8);
+    guide.rotation.z = Math.PI / 2;
+    guide.position.set(0, type.attachOffsetY + 0.1, -1.35);
+    g.add(guide);
+
+    // --- poziční světla a maják (blikají v update) ---
+    const mkLight = (color: number, x: number, y: number, z: number): THREE.Mesh => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), new THREE.MeshBasicMaterial({ color }));
+      m.position.set(x, y, z);
+      g.add(m);
+      this.navLights.push(m);
+      return m;
+    };
+    mkLight(0xff2222, -1.78, 0.2, -L / 2 + 3.0);  // levé červené
+    mkLight(0x22ff44, 1.78, 0.2, -L / 2 + 3.0);    // pravé zelené
+    mkLight(0xffffff, 0, 1.2, L / 2 - 0.3);        // ocasní bílé
+    this.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+    this.beacon.position.set(0, 2.85, -3.4);
+    g.add(this.beacon);
+
+    // rozpočet trojúhelníků (akceptační kritérium < 5 000)
+    let tris = 0;
+    g.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry) {
+        const idx = mesh.geometry.getIndex();
+        tris += (idx ? idx.count : mesh.geometry.getAttribute('position').count) / 3;
+      }
+    });
+    this.triCount = Math.round(tris);
   }
 
-  // Vizální aktualizace: otáčení rotorů podle Ω, rozostření, cívka navijáku.
-  update(dt: number, omega: number, winchRate: number): void {
+  // Vizální aktualizace: otáčení rotorů podle Ω, rozostření, cívka navijáku,
+  // blikání pozičních světel a majáku (v noci výraznější).
+  update(dt: number, omega: number, winchRate: number, timeSec = 0, nightFrac = 0): void {
     this.rotorAngle += omega * dt;
     this.tailAngle += omega * dt * 5.1; // ocasní rotor je rychlejší
     this.rotorGroup.rotation.y = this.rotorAngle;
@@ -219,5 +300,12 @@ export class HeliModel {
     (this.blurDisk.material as THREE.MeshBasicMaterial).opacity = smoothstep(0.45, 0.9, frac) * 0.33;
     (this.tailBlurDisk.material as THREE.MeshBasicMaterial).opacity = smoothstep(0.45, 0.9, frac) * 0.3;
     this.winchDrum.rotation.x += winchRate * dt * 3;
+    const blink = Math.sin(timeSec * Math.PI * 2) > 0.2; // maják ~1 Hz
+    this.beacon.visible = blink;
+    const navOn = 0.35 + 0.65 * nightFrac; // poziční světla svítí hlavně v noci
+    for (const l of this.navLights) {
+      (l.material as THREE.MeshBasicMaterial).transparent = true;
+      (l.material as THREE.MeshBasicMaterial).opacity = navOn;
+    }
   }
 }

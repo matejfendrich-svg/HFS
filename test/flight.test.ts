@@ -9,13 +9,14 @@ import { HELI_TYPES, PHYSICS } from '../src/config';
 
 const type = HELI_TYPES[0];
 
-function flatEnv(groundY = 0): FlightEnv {
+function flatEnv(groundY = 0, mode: FlightEnv['mode'] = 'manual'): FlightEnv {
   return {
     wind: new THREE.Vector3(0, 0, 0),
     heightAt: () => groundY,
     treesNear: () => [],
     time: 0,
     assist: false,
+    mode,
     attachForce: new THREE.Vector3(0, 0, 0),
     loadMass: 0,
   };
@@ -133,6 +134,32 @@ describe('letový model', () => {
     expect(m.engine).toBe('running');
     stepN(m, env, Math.ceil(1 / H), input({ engineCut: true }));
     expect(m.engine).toBe('dead');
+  });
+
+  it('stabilizovaný režim: při neutrální páce se vrtulník sám srovná do vodorovné polohy', () => {
+    const m = new FlightModel(type);
+    m.reset(0, 300, 0);
+    const env = flatEnv(-1e6, 'stabilized');
+    m.omega = m.omegaNom;
+    m.engine = 'running';
+    m.collective = 0.5;
+    m.pitch = 20 * Math.PI / 180; // „rozhozený“ náklon
+    m.roll = -15 * Math.PI / 180;
+    stepN(m, env, Math.ceil(6 / H), input()); // bez vstupu
+    expect(Math.abs(m.pitch)).toBeLessThan(3 * Math.PI / 180);
+    expect(Math.abs(m.roll)).toBeLessThan(3 * Math.PI / 180);
+  });
+
+  it('hover režim: bez vstupu tlumí vodorovnou rychlost (držení pozice)', () => {
+    const m = new FlightModel(type);
+    m.reset(0, 300, 0);
+    const env = flatEnv(-1e6, 'hover');
+    m.omega = m.omegaNom;
+    m.engine = 'running';
+    m.collective = 0.5;
+    m.vel.set(10, 0, 0);
+    stepN(m, env, Math.ceil(8 / H), input());
+    expect(Math.hypot(m.vel.x, m.vel.z)).toBeLessThan(3);
   });
 
   it('setrvačnost: bez vstupu vrtulník drží rychlost (žádné auto-brzdění)', () => {

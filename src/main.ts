@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import {
   WORLD, PHYSICS, CONTROLS, CAMERA, TIME, WEATHER, RENDER, HELI_TYPES, HELI_TYPE_INDEX, ROPE,
+  GAMEPLAY, FLIGHT_MODES, TIME_OF_DAY,
 } from './config';
 import { clamp, lerp, wrapAngle, DEG } from './utils/math';
 import { World } from './world/terrain';
@@ -20,6 +21,13 @@ import { Hud } from './ui/hud';
 import { SoundEngine } from './audio/sound';
 
 type GameState = 'menu' | 'playing' | 'paused';
+
+const MODE_LABELS: Record<string, string> = {
+  manual: 'MANUAL (plný realismus)',
+  stabilized: 'STABILIZOVANÝ',
+  hover: 'HOVER',
+  autopilot: 'AUTOPILOT',
+};
 
 class Game {
   private renderer: THREE.WebGLRenderer;
@@ -56,6 +64,13 @@ class Game {
   private freePitch = 0;
   private crashTimer = 0;
   private wasRopeBroken = false;
+  private settingsOpen = false;
+  private rain: THREE.Points | null = null;
+  private lightningTimer = 0;
+  private nightFrac = 0;
+  private hoverAnchorAlt = 0;
+  private stormActive = false;
+  private lastMode = '';
   // interpolace: stav před posledním fyzikálním krokem
   private prev = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, omega: 0 };
   private readonly tmpV = new THREE.Vector3();
@@ -203,6 +218,7 @@ class Game {
       treesNear: (x, z, r) => this.world.treesNear(x, z, r),
       time: 0,
       assist: false,
+      mode: 'stabilized',
       attachForce: new THREE.Vector3(),
       loadMass: 0,
     };
@@ -211,6 +227,24 @@ class Game {
     this.controls.loadSettings();
     this.hud = new Hud(document.getElementById('ui')!);
     this.hud.bindStart(this.controls.settings, this.mission.money, this.mission.shift, () => this.startGame());
+    this.hud.bindSettingsPanel(this.controls.settings, () => this.controls.saveSettings());
+
+    // déšť pro bouřku (skrytý dokud není zapnutá)
+    const rainGeo = new THREE.BufferGeometry();
+    const rainPos = new Float32Array(WEATHER.storm.rainCount * 3);
+    for (let i = 0; i < WEATHER.storm.rainCount; i++) {
+      rainPos[i * 3] = (Math.random() - 0.5) * 120;
+      rainPos[i * 3 + 1] = Math.random() * 60;
+      rainPos[i * 3 + 2] = (Math.random() - 0.5) * 120;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    this.rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
+      color: 0x9fb8cc, size: 0.14, transparent: true, opacity: 0.55, sizeAttenuation: true, depthWrite: false,
+    }));
+    this.rain.visible = false;
+    this.rain.frustumCulled = false;
+    this.scene.add(this.rain);
+    console.info(`[rotor-logger] model vrtulníku: ${this.heliModel.triCount} trojúhelníků (limit ${RENDER.heliMaxTris})`);
     this.hud.onNextShift = () => {
       this.mission.nextShift(this.logField);
       this.hud.showReport(null);
@@ -245,6 +279,46 @@ class Game {
     this.hud.hideStart();
     this.state = 'playing';
     this.hud.message('Studený start: klávesa E — startér → zážeh → náběh rotoru', 5000);
+  }
+
+  // Autopilot: letí na aktuální cíl mise (kmen při prázdném háku, odkládací plocha
+  // s nákladem), u cíle přejde do hoveru. Jednoduchý P-regulátor přes cílové náklony.
+  private applyAutopilot(input: ReturnType<Controls['output']>): void {
+    const ap = GAMEPLAY.autopilot;
+    let target: THREE.Vector3 | null = null;
+    if (this.rope.attached) {
+      target = this.world.dropCenter.clone().add(new THREE.Vector3(0, ap.cruiseAlt, 0));
+    } else {
+      const log = this.logField.nearestPending(this.heli.pos);
+      if (log) target = log.pos.clone().add(new THREE.Vector3(0, ap.cruiseAlt, 0));
+    }
+    if (!target) return;
+    const to = this.tmpV.set(target.x - this.heli.pos.x, 0, target.z - this.heli.pos.z);
+    const dist = to.length();
+    const fwd = this.tmpV2.set(0, 0, -1).applyQuaternion(this.heli.quaternion());
+    const right = this.tmpV3.set(1, 0, 0).applyQuaternion(this.heli.quaternion());
+    // cílová vodorovná rychlost směrem k cíli
+    const speed = Math.min(dist * ap.kPos, ap.maxSpeed);
+    const desVx = dist > 0.5 ? (to.x / dist) * speed : 0;
+    const desVz = dist > 0.5 ? (to.z / dist) * speed : 0;
+    // chyba rychlosti → cílové zrychlení → náklon (a ≈ g·tilt)
+    const aDesX = (desVx - this.heli.vel.x) * ap.kVel;
+    const aDesZ = (desVz - this.heli.vel.z) * ap.kVel;
+    const aF = aDesX * fwd.x + aDesZ * fwd.z;
+    const aR = aDesX * right.x + aDesZ * right.z;
+    const maxTilt = ap.maxTiltDeg * DEG;
+    input.targetPitch = clamp(-aF / PHYSICS.gravity, -maxTilt, maxTilt);
+    input.targetRoll = clamp(aR / PHYSICS.gravity, -maxTilt, maxTilt);
+    // pedály: natočit příď k cíli
+    const bearing = Math.atan2(-to.x, -to.z);
+    input.pedal = clamp(wrapAngle(bearing - this.heli.yaw) * ap.yawGain * 10, -1, 1);
+    // kolektiv: výška nad cílem
+    input.collectiveRate = clamp((target.y - this.heli.pos.y) * ap.altGain - this.heli.vel.y * 0.12, -1, 1) * 0.6;
+    if (dist < ap.arriveRadius && Math.abs(this.heli.pos.y - target.y) < 3) {
+      // u cíle: zpomalit a držet (hover efekt přes útlum rychlosti v režimu)
+      input.targetPitch = 0;
+      input.targetRoll = 0;
+    }
   }
 
   private setPaused(p: boolean): void {
@@ -289,6 +363,29 @@ class Game {
       this.camView = (this.camView + 1) % CAMERA.views.length;
       this.freeYaw = 0; this.freePitch = 0;
     }
+    // panel nastavení (O) — při otevření se fyzika zastaví
+    if (input.settingsPressed) {
+      this.settingsOpen = !this.settingsOpen;
+      this.hud.showSettings(this.settingsOpen);
+    }
+    if (this.settingsOpen && input.pausePressed) {
+      this.settingsOpen = false;
+      this.hud.showSettings(false);
+    }
+    // cyklus letových režimů (P)
+    if (input.modeCyclePressed) {
+      const s = this.controls.settings;
+      const i = FLIGHT_MODES.indexOf(s.mode);
+      s.mode = FLIGHT_MODES[(i + 1) % FLIGHT_MODES.length];
+      this.controls.saveSettings();
+      this.hoverAnchorAlt = this.heli.pos.y;
+      this.hud.message(`Režim: ${MODE_LABELS[s.mode]}`, 2000);
+    }
+    if (this.settingsOpen) {
+      this.updateEnvironment(frameDt);
+      this.render(0);
+      return;
+    }
     if (input.savePressed) {
       this.mission.save();
       this.controls.saveSettings();
@@ -311,12 +408,36 @@ class Game {
       return;
     }
 
-    // --- herní čas a počasí ---
+    // --- herní čas a počasí (nastavení: čas dne, vítr, bouřka) ---
     this.hour = (this.hour + (frameDt * 24) / (TIME.dayLengthMin * 60)) % 24;
-    const gust = Math.sin(now / 1000 * WEATHER.gustFreq * Math.PI * 2) * 0.6 + Math.sin(now / 1000 * WEATHER.gustFreq * 2.7) * 0.4;
-    this.wind.set(WEATHER.windBase.x + gust * WEATHER.gustAmp, 0, WEATHER.windBase.z + gust * WEATHER.gustAmp * 0.6);
+    const s = this.controls.settings;
+    const tod = s.timeOfDay;
+    if (tod !== 'auto') this.hour = TIME_OF_DAY.hours[tod === 'day' ? 'day' : tod === 'dusk' ? 'dusk' : 'night'];
+    const storm = s.storm;
+    const windScale = WEATHER.windLevels[clamp(s.windLevel, 0, WEATHER.windLevels.length - 1)];
+    const gust = (Math.sin(now / 1000 * WEATHER.gustFreq * Math.PI * 2) * 0.6 + Math.sin(now / 1000 * WEATHER.gustFreq * 2.7) * 0.4)
+      * WEATHER.gustAmp * (storm ? WEATHER.storm.gustMultiplier : 1);
+    this.wind.set((WEATHER.windBase.x + gust) * windScale, 0, (WEATHER.windBase.z + gust * 0.6) * windScale);
+    if (storm && Math.random() < WEATHER.storm.lightningChancePerS * frameDt) this.lightningTimer = 0.14;
     this.flightEnv.time = now / 1000;
-    this.flightEnv.assist = this.controls.settings.assist;
+    this.flightEnv.assist = s.assist;
+    this.flightEnv.mode = s.mode;
+    this.stormActive = storm;
+    if (s.testMode) this.showTelemetry = true;
+    if (s.mode !== this.lastMode) {
+      this.lastMode = s.mode;
+      this.hoverAnchorAlt = this.heli.pos.y;
+      this.hud.setModeBadge(this.modeBadgeText());
+    }
+
+    // --- autopilot: generuje vstupy místo hráče (let na cíl mise, pak hover) ---
+    if (s.mode === 'autopilot') this.applyAutopilot(input);
+    else if (s.mode === 'hover') {
+      // hover: držení výšky (kotva při vstupu do režimu) + nulové náklony
+      input.targetPitch = 0;
+      input.targetRoll = 0;
+      input.collectiveRate = clamp((this.hoverAnchorAlt - this.heli.pos.y) * GAMEPLAY.hover.altHoldGain - this.heli.vel.y * 0.15, -0.4, 0.4);
+    }
 
     // --- akce hráče ---
     if (input.hookPressed) this.mission.hookPress(this.heli, this.rope, this.logField);
@@ -430,19 +551,53 @@ class Game {
     this.sun.position.copy(hp).addScaledVector(sunDir, 320);
     this.sun.target.position.copy(hp);
     this.sun.target.updateMatrixWorld();
-    // mlha podle denní doby
+    // mlha podle denní doby (+ ztmavení při bouřce)
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(bot).lerp(new THREE.Color(0xffffff), dayFrac * 0.25);
+    if (this.stormActive) fog.color.lerp(new THREE.Color(0x2a3038), WEATHER.storm.fogDarken);
     fog.near = RENDER.fogNear * (1 - dayFrac * 0.3);
-    fog.far = RENDER.fogFar * (1 - dayFrac * 0.35);
-    (this.stars.material as THREE.PointsMaterial).opacity = (1 - dayFrac) * 0.9;
-    this.renderer.setClearColor(bot);
+    fog.far = RENDER.fogFar * (1 - dayFrac * 0.35) * (this.stormActive ? 0.55 : 1);
+    (this.stars.material as THREE.PointsMaterial).opacity = (1 - dayFrac) * 0.9 * (this.stormActive ? 0.2 : 1);
+    this.nightFrac = 1 - dayFrac;
+    // blesk: krátký záblesk světla
+    if (this.lightningTimer > 0) {
+      this.lightningTimer -= dt;
+      this.sun.intensity *= WEATHER.storm.lightningBoost;
+      this.hemi.intensity *= 1.8;
+      this.skyMat.uniforms.sunColor.value.setHex(0xffffff);
+    }
+    this.renderer.setClearColor(fog.color);
   }
 
   // --------------------------------------------------------------- vizuál
+  private modeBadgeText(): string {
+    const s = this.controls.settings;
+    const parts = [MODE_LABELS[s.mode] ?? s.mode];
+    if (s.timeOfDay !== 'auto') parts.push(s.timeOfDay === 'day' ? 'den' : s.timeOfDay === 'dusk' ? 'soumrak' : 'noc');
+    if (s.windLevel === 2) parts.push('silný vítr');
+    else if (s.windLevel === 1) parts.push('mírný vítr');
+    if (s.storm) parts.push('BOUŘKA');
+    if (s.testMode) parts.push('test');
+    return parts.join(' · ');
+  }
+
   private updateVisuals(dt: number): void {
     // vrtulník (s interpolací mezi fyzikálními kroky se promítne v render())
-    this.heliModel.update(dt, this.heli.omega, this.rope.winchRate);
+    this.heliModel.update(dt, this.heli.omega, this.rope.winchRate, performance.now() / 1000, this.nightFrac);
+    // déšť při bouřce: částice padají kolem kamery
+    if (this.rain) {
+      this.rain.visible = this.stormActive;
+      if (this.stormActive) {
+        this.rain.position.copy(this.camera.position);
+        const pos = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute;
+        for (let i = 0; i < pos.count; i++) {
+          let y = pos.getY(i) - WEATHER.storm.rainSpeed * dt;
+          if (y < 0) y += 60;
+          pos.setY(i, y);
+        }
+        pos.needsUpdate = true;
+      }
+    }
     // lano jako čára mezi body
     const posAttr = this.ropeGeo.getAttribute('position') as THREE.BufferAttribute;
     for (let i = 0; i < this.rope.points.length; i++) {
@@ -533,6 +688,7 @@ class Game {
       this.hour, (this.hour % 1) * 60, warnings, prompt,
     );
     this.hud.setHelp(this.showHelp);
+    this.hud.setModeBadge(this.modeBadgeText());
     if (this.showTelemetry) {
       const e = this.heli.energy();
       this.hud.setTelemetry(true, [
@@ -563,8 +719,13 @@ class Game {
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ'));
     // drobné chvění podle Ω a zátěže (5.4) — čistě vizuální
     const tel = this.heli.telemetry;
+    const s = this.controls.settings;
     const loadFrac = this.rope.attached ? 0.6 : 0;
-    const vibAmp = (PHYSICS.turbulence.amp * (0.3 + 0.7 * tel.omegaFrac) * (1 + loadFrac))
+    // chvění podle režimu (stabilizované režimy „ne klepou“) a bouřky
+    const modeVib = s.mode === 'manual' ? 1 : s.mode === 'hover' ? GAMEPLAY.hover.vibScale
+      : s.mode === 'autopilot' ? GAMEPLAY.autopilot.vibScale : GAMEPLAY.stabilized.vibScale;
+    const stormTurb = this.stormActive ? WEATHER.storm.turbulenceMultiplier : 1;
+    const vibAmp = (PHYSICS.turbulence.amp * (0.3 + 0.7 * tel.omegaFrac) * (1 + loadFrac) * modeVib * stormTurb)
       + (tel.retreating ? PHYSICS.buffet.amp : 0);
     const t = performance.now() / 1000;
     q.x += (Math.sin(t * 31.7) + Math.sin(t * 47.3) * 0.5) * vibAmp;

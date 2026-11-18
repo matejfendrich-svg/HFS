@@ -181,6 +181,8 @@ export const CONTROLS = {
     assistToggle: ['KeyG'],
     pause: ['Escape'],
     nextShift: ['Enter'],
+    settings: ['KeyO'],           // panel nastavení (čas, vítr, bouřka, test, režim letu)
+    modeCycle: ['KeyP'],          // cykluje letový režim Manual/Stabilizovaný/Hover/Autopilot
   },
 } as const;
 
@@ -242,7 +244,53 @@ export const WEATHER = {
   windBase: { x: 1.2, z: 0.6 }, // základní vítr [m/s]
   gustAmp: 1.6,                 // amplituda poryvů
   gustFreq: 0.05,               // frekvence poryvů [Hz-ish]
-};
+  // úrovně větru volitelné v nastavení (násobek základního)
+  windLevels: [0, 1, 2.2] as readonly number[], // Bez větru / Mírný / Silný
+  // bouřka: silné poryvy, liják, blesky, temnější mlha (nastavení „Bouřka“)
+  storm: {
+    gustMultiplier: 3.2,
+    turbulenceMultiplier: 2.5,
+    rainCount: 1800,
+    rainSpeed: 22,              // rychlost kapek [m/s]
+    lightningChancePerS: 0.25,  // pravděpodobnost blesku za sekundu
+    lightningBoost: 3.0,        // násobek světla při blesku
+    fogDarken: 0.55,
+  },
+} as const;
+
+// Čas dne volitelný v nastavení („Den/Noc“ apod.); auto = cyklus přes TIME.dayLengthMin
+export const TIME_OF_DAY = {
+  presets: ['auto', 'day', 'dusk', 'night'] as const,
+  hours: { day: 12.0, dusk: 18.5, night: 0.5 } as const,
+} as const;
+export type TimeOfDayPreset = (typeof TIME_OF_DAY.presets)[number];
+
+// Letové režimy (nastavení): manual = plný realismus, stabilized = „DJI“ (tlumení,
+// auto-level při neutrální páce), hover = držení pozice/výšky, autopilot = let na cíl.
+export const FLIGHT_MODES = ['manual', 'stabilized', 'hover', 'autopilot'] as const;
+export type FlightMode = (typeof FLIGHT_MODES)[number];
+
+export const GAMEPLAY = {
+  modeDefault: 'stabilized' as FlightMode,
+  // stabilizovaný režim: vyšší tlumení náklonu, auto-level, mírný útlum rychlosti, méně chvění
+  stabilized: { kDMultiplier: 1.9, autoLevelDeadband: 0.07, horizDamp: 0.55, vibScale: 0.35 },
+  // hover: držení pozice — silné tlumení vodorovné rychlosti, výšku drží kolektiv
+  hover: { kDMultiplier: 2.2, autoLevelDeadband: 0.05, horizDamp: 2.2, vibScale: 0.3, altHoldGain: 0.35 },
+  // autopilot: letí na aktuální cíl mise (kmen, nebo odkládací plocha), pak hover
+  autopilot: {
+    maxSpeed: 13,               // m/s
+    cruiseAlt: 14,              // výška nad cílem [m]
+    arriveRadius: 4.5,          // m — uvnitř se přepne na hover
+    kPos: 0.35,                 // P regulátor pozice → cílová rychlost
+    kVel: 1.6,                  // P regulátor rychlosti → cílový náklon
+    maxTiltDeg: 18,
+    yawGain: 0.06,
+    altGain: 0.06,
+    vibScale: 0.3,
+  },
+  // ovládání lana navíc přes Shift + kolečko myši (kromě R/V)
+  wheelWinchWithShift: true,
+} as const;
 
 export const AUDIO = {
   masterVolume: 0.8,
@@ -267,4 +315,10 @@ export const SETTINGS_DEFAULTS = {
   expo: CONTROLS.expoDefault,
   sensitivity: CONTROLS.sensitivityDefault,
   muted: false,
+  // „témata“ a režimy v panelu nastavení (klávesa O)
+  timeOfDay: 'auto' as TimeOfDayPreset,
+  windLevel: 1,                 // index do WEATHER.windLevels
+  storm: false,
+  testMode: false,
+  mode: GAMEPLAY.modeDefault,
 };
