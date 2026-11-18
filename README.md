@@ -22,11 +22,14 @@ npm run dev        # vývojový server na localhost (Vite)
 
 ```bash
 npm run build      # → dist/index.html (veškerý JS/CSS inline, ~570 kB)
+npm run pack       # build + zkopíruje ho jako rotor-logger.html do kořene repozitáře
 ```
 
-`dist/index.html` otevři na macOS **dvojklikem ze složky** (protokol `file://`) — hra běží
-plně offline v Safari i Chrome (WebGL2 je v obou podporován; v Safari případně povol
-vývojářské nastavení WebGL — viz DECISIONS.md). Žádné CDN, žádné fetch ze sítě.
+**Hratelný soubor je přímo v repozitáři: [`rotor-logger.html`](rotor-logger.html)**
+(jako u FSS — celá hra v jednom HTML). Otevři ho na macOS **dvojklikem ze složky** nebo
+přímo z GitHubu — běží přes protokol `file://`, plně offline v Safari i Chrome (WebGL2
+je v obou podporován; v Safari případně povol vývojářské nastavení WebGL — viz
+DECISIONS.md). Žádné CDN, žádné fetch ze sítě. `dist/` zůstává build artefakt v .gitignore.
 
 ### Testy a kontrola typů
 
