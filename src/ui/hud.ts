@@ -290,6 +290,11 @@ export class Hud {
     this.el.help.style.display = visible ? 'block' : 'none';
   }
 
+  // pozice textu hook-cam — v main se nastaví pod PiP obraz v pravém horním rohu
+  setHookInfoTop(topPx: number): void {
+    this.el.hookInfo.style.top = `${Math.round(topPx)}px`;
+  }
+
   showReport(report: ShiftReport | null): void {
     const ov = this.el.reportOverlay;
     if (!report) { ov.classList.add('hidden'); return; }

@@ -141,3 +141,13 @@ v `src/config.ts`.
 31. **Jen dva režimy letu (17.6):** autopilot a hover odstraněny, zůstává
     `manual` / `stabilized` (klávesa P). Yaw zůstává na A/D (jako levá páka FPV
     ovladače) — myš řídí jen pitch+roll (pravá páka).
+32. **Chase kamera je vycentrovaná na vrtulník (zpětná vazba uživatele):** `CAMERA.lookAhead`
+    sníženo z 6 m na 2 m — kamera míří téměř přímo na střed trupu (o 1,2 m výš), takže vrtulník
+    je uprostřed obrazu a při náklonu nezmizí ze záběru. Při rychlosti > 10 m/s se navíc sama
+    srovná za stroj (viz 26).
+33. **Hook cam jako zadní kamera auta (zpětná vazba uživatele):** kamera je umístěna POD
+    trupem, mírně ZA závěsným bodem (`CAMERA.hookCamLocal = {0, -2.05, 1.1}` — mimo geometrii
+    navijáku) a míří dolů na hák (`hookCamLookBelow = 2 m` pod hák). V horní části obrazu je
+    vidět břicho/naviják stroje, lano vede dolů k háku — jako pohled ze zadní kamery auta.
+    PiP zůstává trvale v pravém horním rohu; text s vzdáleností hák–cíl se posouvá přímo pod
+    PiP (`Hud.setHookInfoTop`), aby se nepřekrýval.

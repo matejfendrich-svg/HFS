@@ -144,12 +144,14 @@ export class CameraRig {
     camera.rotateZ(Math.sin(t * 41.7) * 0.5 * amp * 0.4);
   }
 
-  // hook cam (6.5d): kamera pod trupem, namířená dolů podél lana na hák
+  // hook cam (6.5d): kamera pod trupem mírně za závěsem (jako zadní kamera auta),
+  // namířená dolů na hák — nahoře v obraze je naviják/trup, lano vede k háku
   updateHookCam(heliPos: THREE.Vector3, heliQuat: THREE.Quaternion, hookPos: THREE.Vector3, fov: number): void {
-    const belly = this.tmpV.set(0, -1.1, 0.6).applyQuaternion(heliQuat).add(heliPos);
+    const lc = CAMERA.hookCamLocal;
+    const belly = this.tmpV.set(lc.x, lc.y, lc.z).applyQuaternion(heliQuat).add(heliPos);
     this.hookCamera.position.copy(belly);
     this.hookCamera.up.set(0, 0, -1).applyQuaternion(heliQuat); // „nahoru“ v obraze = dopředu stroje
-    this.hookCamera.lookAt(hookPos.x, hookPos.y - 3, hookPos.z);
+    this.hookCamera.lookAt(hookPos.x, hookPos.y - CAMERA.hookCamLookBelow, hookPos.z);
     this.hookCamera.fov = fov;
     this.hookCamera.aspect = 1; // PiP čtverec; při full se nastaví z canvasu
     this.hookCamera.updateProjectionMatrix();

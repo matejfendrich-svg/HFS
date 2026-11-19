@@ -724,6 +724,13 @@ class Game {
       this.controls.stickFiltered, stickRadiusPx, this.mission, bearing, dist, label,
       this.hour, (this.hour % 1) * 60, warnings, prompt, tensionFrac, hookInfo,
     );
+    // text hook-cam patří přímo pod PiP obraz v pravém horním rohu (ne přes něj)
+    if (this.camRig.hookCam === 'pip') {
+      const pipH = Math.floor(window.innerWidth * CAMERA.hookCamPipFrac * 9 / 16);
+      this.hud.setHookInfoTop(16 + pipH + 10);
+    } else if (this.camRig.hookCam === 'full') {
+      this.hud.setHookInfoTop(76);
+    }
     this.hud.setHelp(this.showHelp);
     this.hud.setModeBadge(this.modeBadgeText());
     if (this.showTelemetry) {

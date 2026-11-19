@@ -262,7 +262,7 @@ export const CAMERA = {
   // zoom kolečkem (při volném rozhledu) nebo +/- v rozmezí zoomMin–zoomMax.
   chaseDist: 17,
   chaseHeight: 5,
-  lookAhead: 6,
+  lookAhead: 2,                 // kamera míří téměř přímo na vrtulník — stroj je vycentrovaný uprostřed obrazu
   smoothingTau: 0.3,            // vyhlazení polohy i orientace, τ = 0,3 s (6.5a)
   rollFactor: 0.25,             // kamera přebírá jen 20–30 % roll stroje (6.5c)
   zoomMin: 8,
@@ -276,6 +276,10 @@ export const CAMERA = {
   views: ['chase', 'cockpit', 'high', 'side'],
   hookCamModes: ['pip', 'full', 'off'] as const, // H cykluje; PiP v pravém horním rohu (17.2)
   hookCamPipFrac: 0.26,         // šířka obrazu v obrazu jako zlomek šířky okna
+  // hook kamera „jako zadní kamera v autě": pod trupem, mírně ZA závěsným bodem,
+  // míří dolů na hák — v horní části obrazu je vidět naviják/trup, lano vede k háku (6.5d)
+  hookCamLocal: { x: 0, y: -2.05, z: 1.1 }, // lokální pozice kamery vůči středu trupu [m]
+  hookCamLookBelow: 2.0,        // kamera míří na bod tolik metrů POD hákem [m]
 };
 export type HookCamMode = (typeof CAMERA.hookCamModes)[number];
 
