@@ -50,8 +50,8 @@ náklon), klávesy jsou kolektiv a pedály.
 
 | Vstup | Akce |
 | --- | --- |
-| myš | cyklika — čím dál od středu, tím větší náklon (myš nahoru = příď dolů, lze invertovat) |
-| `W` / `S` (nebo kolečko myši) | kolektiv — více / méně vztlaku |
+| myš | cyklika — čím dál od středu, tím větší náklon; poloha páky je **filtrovaná** (dolnopropust τ ~0,1 s + mrtvá zóna 5 % + limit změny), ukazatel páky je kolem středu obrazovky |
+| `W` / `S` (nebo kolečko myši) | **příkaz vertikální rychlosti** (plynulý náběh, +5/−8 m/s); po puštění **držení výšky** (indikátor v HUD) — měkký kolektiv, žádné skoky |
 | `A` / `D` (alt. `Q` / `E`) | pedály (zatáčení) |
 | `R` / `V` (nebo `Shift`+kolečko) | naviják — vysunout / zatáhnout lano (3–40 m, 2 m/s) |
 | `mezerník` | zajistit / uvolnit hák u kmene |
@@ -59,12 +59,15 @@ náklon), klávesy jsou kolektiv a pedály.
 | `T` | testovací výpadek motoru (autorotace) |
 | `C` | trim — aktuální výchylka myši se stane nulou |
 | `X` | přepnout kameru (chase / kokpit / shora / z boku) |
-| pravé tlačítko myši (držet) | volný rozhled |
-| `O` | **panel nastavení**: čas dne (auto/den/soumrak/noc), vítr (bez/mírný/silný), **bouřka** (poryvy + liják + blesky), test režim, režim letu |
-| `P` | cyklovat režim letu: **Stabilizovaný** (DJI-like: tlumení, auto-level, méně kmitání) → **Hover** (držení pozice a výšky) → **Autopilot** (let na cíl mise) → **Manual** (plný realismus) |
-| `G` | režim Assist (měkké přistání) / Real |
+| `H` | **pohled na naviják** (hook cam): hlavní → obraz v obrazu → celá obrazovka, s údajem vzdálenosti hák–cíl |
+| `+` / `−` (nebo kolečko při rozhledu) | zoom kamery |
+| pravé tlačítko myši (držet) | volný rozhled současně s řízením (páka drží poslední polohu) |
+| `O` | **panel nastavení**: čas dne, vítr, bouřka, test režim, režim letu, vyhlazení páky, FOV, zoom |
+| `P` | cyklovat přídavný režim letu: Stabilizovaný / Hover / Autopilot / Manual (základní řídicí vrstva je vždy stejná) |
 | `F1` / `F3` / `F5` | nápověda / telemetrie / rychlé uložení |
 | `M` | ztlumit zvuk · `Esc` pauza · `Enter` další směna po zprávě |
+
+Trup se nikdy nerozklepe — jediné chvění je kamerové (< 0,2°, podle otáček rotoru).
 
 Kliknutím na herní plochu se zamkne kurzor (pointer lock); `Esc` ho uvolní.
 

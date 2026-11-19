@@ -37,8 +37,11 @@ export class Hud {
         <div class="row"><span class="label">${ICONS.speed} rychlost</span><span class="value" id="spd">0 m/s</span></div>
         <div class="row"><span class="label">${ICONS.load} náklad</span><span class="value" id="load">0 %</span></div>
         <div class="row"><span class="label">${ICONS.rope} lano</span><span class="value" id="rope">3 m</span></div>
-        <div style="grid-column: 1 / span 2; color: var(--dim); font-size: 11px; margin-top: 4px;">lano: <span class="kbd">R</span>/<span class="kbd">V</span> nebo <span class="kbd">Shift</span>+kolečko · hák: <span class="kbd">mezerník</span> · nastavení: <span class="kbd">O</span> · režim: <span class="kbd">P</span></div>
+        <div class="row"><span class="label">napětí lana</span><span class="value" id="tension">0 %</span></div>
+        <div class="row"><span class="label">${ICONS.altitude} držení výšky</span><span class="value" id="althold" style="color:#666;">—</span></div>
+        <div style="grid-column: 1 / span 2; color: var(--dim); font-size: 11px; margin-top: 4px;">lano: <span class="kbd">R</span>/<span class="kbd">V</span> nebo <span class="kbd">Shift</span>+kolečko · hák: <span class="kbd">mezerník</span> · hook cam: <span class="kbd">H</span> · nastavení: <span class="kbd">O</span> · režim: <span class="kbd">P</span></div>
       </div>
+      <div id="hookInfo" class="panel" style="position:absolute; right:18px; bottom:170px; padding:8px 14px; font-size:13px; display:none;"></div>
       <div id="topbar-left">
         <div id="target" class="panel">
           <svg id="targetArrow" viewBox="0 0 24 24"><path d="M12 2l6 18-6-4-6 4z"/></svg>
@@ -69,7 +72,6 @@ export class Hud {
             <span class="k">F1 nápověda · F3 telemetrie · F5 uložit · M zvuk</span><span>G Assist/Real</span>
           </div>
           <div class="settings">
-            <label><input type="checkbox" id="setAssist" /> Assist (gyro hover, měkké přistání)</label>
             <label><input type="checkbox" id="setInvertY" /> invertovat myš Y</label>
             <label>expo <input type="range" id="setExpo" min="0" max="0.5" step="0.05" /></label>
             <label>citlivost <input type="range" id="setSens" min="0.4" max="2" step="0.05" /></label>
@@ -115,23 +117,30 @@ export class Hud {
             <label><input type="checkbox" id="setTest" /> Test režim (telemetrie F3, výpadek motoru T)</label>
             <label style="justify-content: space-between;">Režim letu
               <select id="setMode">
-                <option value="stabilized">Stabilizovaný (DJI-like)</option>
+                <option value="stabilized">Stabilizovaný (tlumený)</option>
                 <option value="hover">Hover (držení pozice)</option>
                 <option value="autopilot">Autopilot (let na cíl)</option>
                 <option value="manual">Manual (plný realismus)</option>
               </select>
             </label>
+            <label style="justify-content: space-between;">Vyhlazení joysticku (τ)
+              <input type="range" id="setSmooth" min="0.02" max="0.3" step="0.01" /></label>
+            <label style="justify-content: space-between;">FOV kamery
+              <input type="range" id="setFov" min="40" max="90" step="1" /></label>
+            <label style="justify-content: space-between;">Zoom kamery
+              <input type="range" id="setZoom" min="8" max="30" step="1" /></label>
           </div>
           <p class="dim">Režim letu lze rychle cyklovat klávesou <span class="kbd">P</span>. Nastavení se ukládají automaticky.</p>
           <button id="closeSettingsBtn">Zavřít (O)</button>
         </div>
       </div>
     `;
-    const ids = ['stats', 'nr', 'coll', 'agl', 'spd', 'load', 'rope', 'target', 'targetArrow', 'targetText', 'clock',
+    const ids = ['stats', 'nr', 'coll', 'agl', 'spd', 'load', 'rope', 'tension', 'althold', 'hookInfo', 'target', 'targetArrow', 'targetText', 'clock',
       'radio', 'prompt', 'reticle', 'stickDot', 'stickRing', 'warnings', 'msg', 'telemetry', 'help',
       'startOverlay', 'reportOverlay', 'report', 'pauseOverlay', 'startBtn', 'resumeBtn', 'saveInfo',
-      'setAssist', 'setInvertY', 'setExpo', 'setSens', 'modeBadge',
-      'settingsOverlay', 'setTime', 'setWind', 'setStorm', 'setTest', 'setMode', 'closeSettingsBtn', 'openSettingsBtn'];
+      'setInvertY', 'setExpo', 'setSens', 'modeBadge',
+      'settingsOverlay', 'setTime', 'setWind', 'setStorm', 'setTest', 'setMode', 'closeSettingsBtn', 'openSettingsBtn',
+      'setSmooth', 'setFov', 'setZoom'];
     this.el = {};
     for (const id of ids) this.el[id] = ui.querySelector('#' + id) as HTMLElement;
     this.buildHelp();
@@ -146,29 +155,27 @@ export class Hud {
       <span class="kbd">R</span>/<span class="kbd">V</span> naviják vysunout/zatáhnout (max 40 m), <span class="kbd">Shift</span>+kolečko také<br>
       <span class="kbd">mezerník</span> zajistit/uvolnit hák u kmene<br>
       <span class="kbd">E</span> start/vypnutí motoru, <span class="kbd">T</span> test výpadku<br>
-      <span class="kbd">X</span> přepnout kameru, držet <span class="kbd">Pravé tlačítko</span> = volný rozhled<br>
-      <span class="kbd">F3</span> telemetrie, <span class="kbd">F5</span> uložit, <span class="kbd">M</span> zvuk, <span class="kbd">G</span> Assist<br>
+      <span class="kbd">X</span> přepnout kameru, <span class="kbd">H</span> pohled na naviják (PiP/celá obrazovka), <span class="kbd">+</span>/<span class="kbd">−</span> zoom<br>
+      držet <span class="kbd">Pravé tlačítko</span> = volný rozhled (kolečko pak zoomuje), joystick drží poslední polohu<br>
+      <span class="kbd">F3</span> telemetrie, <span class="kbd">F5</span> uložit, <span class="kbd">M</span> zvuk<br>
       <span class="kbd">O</span> nastavení (čas dne, vítr, bouřka, test, režim letu), <span class="kbd">P</span> režim letu<br>
       <span class="kbd">Esc</span> pauza`;
   }
 
   bindStart(settings: ControlSettings, money: number, shift: number, onStart: () => void): void {
-    const assist = this.el.setAssist as HTMLInputElement;
     const invert = this.el.setInvertY as HTMLInputElement;
     const expo = this.el.setExpo as HTMLInputElement;
     const sens = this.el.setSens as HTMLInputElement;
-    assist.checked = settings.assist;
     invert.checked = settings.invertY;
     expo.value = String(settings.expo);
     sens.value = String(settings.sensitivity);
     this.el.saveInfo.textContent = money > 0 ? `Uloženo: ${Math.round(money)} Kč, směna č. ${shift}` : 'Nová hra — seed světa v config.ts.';
     const sync = () => {
-      settings.assist = assist.checked;
       settings.invertY = invert.checked;
       settings.expo = parseFloat(expo.value);
       settings.sensitivity = parseFloat(sens.value);
     };
-    for (const el of [assist, invert, expo, sens]) el.addEventListener('input', sync);
+    for (const el of [invert, expo, sens]) el.addEventListener('input', sync);
     this.el.startBtn.addEventListener('click', () => {
       sync();
       onStart();
@@ -203,6 +210,8 @@ export class Hud {
     minute: number,
     warnings: string[],
     prompt: string | null,
+    tensionFrac = 0,
+    hookInfo: string | null = null,
   ): void {
     const nr = tel.omegaFrac * 100;
     const nrEl = this.el.nr;
@@ -213,6 +222,12 @@ export class Hud {
     this.el.spd.textContent = `${tel.airspeed.toFixed(0)} m/s`;
     this.el.load.textContent = `${Math.round(loadFrac * 100)} %`;
     this.el.rope.textContent = `${ropeLen.toFixed(1)} m`;
+    this.el.tension.textContent = `${Math.round(tensionFrac * 100)} %`;
+    const ah = this.el.althold;
+    ah.textContent = tel.altHold ? 'DRŽÍ' : '—';
+    ah.style.color = tel.altHold ? '#7dff9a' : '#666';
+    const hi = this.el.hookInfo;
+    if (hookInfo) { hi.style.display = 'block'; hi.textContent = hookInfo; } else hi.style.display = 'none';
 
     // cíl + kompasová značka
     const arrow = this.el.targetArrow as unknown as SVGElement;
@@ -294,12 +309,18 @@ export class Hud {
     const storm = this.el.setStorm as HTMLInputElement;
     const test = this.el.setTest as HTMLInputElement;
     const mode = this.el.setMode as HTMLSelectElement;
+    const smooth = this.el.setSmooth as HTMLInputElement;
+    const fov = this.el.setFov as HTMLInputElement;
+    const zoom = this.el.setZoom as HTMLInputElement;
     const sync = () => {
       settings.timeOfDay = time.value as ControlSettings['timeOfDay'];
       settings.windLevel = parseInt(wind.value, 10);
       settings.storm = storm.checked;
       settings.testMode = test.checked;
       settings.mode = mode.value as ControlSettings['mode'];
+      settings.stickSmoothing = parseFloat(smooth.value);
+      settings.fov = parseFloat(fov.value);
+      settings.zoom = parseFloat(zoom.value);
       onChange();
     };
     const reflect = () => {
@@ -308,8 +329,12 @@ export class Hud {
       storm.checked = settings.storm;
       test.checked = settings.testMode;
       mode.value = settings.mode;
+      smooth.value = String(settings.stickSmoothing);
+      fov.value = String(settings.fov);
+      zoom.value = String(settings.zoom);
     };
-    for (const el of [time, wind, storm, test, mode]) el.addEventListener('change', sync);
+    for (const el of [time, wind, storm, test, mode, smooth, fov, zoom]) el.addEventListener('change', sync);
+    for (const el of [smooth, fov, zoom]) el.addEventListener('input', sync);
     this.el.closeSettingsBtn.addEventListener('click', () => this.showSettings(false));
     this.el.openSettingsBtn.addEventListener('click', () => { this.showPause(false); this.showSettings(true); });
     reflect();

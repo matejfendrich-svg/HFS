@@ -1,4 +1,11 @@
-# GAME_SPEC.md — Rotor Logger (kompletní zadání)
+# GAME_SPEC.md — Rotor Logger (kompletní zadání, revize v2 se záplatou §17)
+
+> Toto je aktuální zadání (v2). Změny oproti v1: §3 struktura (přidán `helicopter/camera.ts`),
+> §5.4 přepracováno na „klid, nikoliv chvění“ (test klidu, jen kamerové chvění < 0,2°),
+> §6 body 2b (filtr joysticku), 3/3b (měkký kolektiv + držení výšky), 5a–5d (kamery vč. hook cam H),
+> §10 HUD doplňky, §12 kritéria 11–13, §17 ZÁPLATA po prvním testu (nejvyšší priorita).
+> Praktické odchylky od původního textu (4×4 km mapa, řeka/jezero, režimy letu) jsou v DECISIONS.md.
+
 
 > Zkrácený věrný přepis zadání pro vývojáře; plný originál je v historii zadání.
 > Veškeré konstanty žijí v `src/config.ts`.

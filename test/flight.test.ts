@@ -15,7 +15,6 @@ function flatEnv(groundY = 0, mode: FlightEnv['mode'] = 'manual'): FlightEnv {
     heightAt: () => groundY,
     treesNear: () => [],
     time: 0,
-    assist: false,
     mode,
     attachForce: new THREE.Vector3(0, 0, 0),
     loadMass: 0,
@@ -60,28 +59,76 @@ describe('letový model', () => {
     expect(m.telemetry.omegaFrac).toBeLessThan(1.1);
   });
 
-  it('hover: vzlet, stabilní visení, přistání — bez NaN a crashů', () => {
+  it('hover: vzlet (W = příkaz stoupání), visení, přistání — bez NaN a crashů', () => {
     const m = new FlightModel(type);
     m.reset(0, 2.7, 0);
     const env = flatEnv();
     stepN(m, env, Math.ceil(1 / H), input({ engineStart: true }));
     stepN(m, env, Math.ceil(25 / H), input()); // spool-up
     expect(m.engine).toBe('running');
-    // kolektiv na hover hodnotu pozvolna (cca 0,58 — plný kolektiv by přetížil rotor)
-    stepN(m, env, Math.ceil(1.05 / H), input({ collectiveRate: 1 }));
-    stepN(m, env, Math.ceil(30 / H), input());
+    // W držet 6 s → cílová vertikální rychlost naroste plynule na +5 m/s → vzlet
+    stepN(m, env, Math.ceil(6 / H), input({ collectiveRate: 1 }));
+    stepN(m, env, Math.ceil(15 / H), input());
     expect(m.crashed).toBe(false);
     expect(Number.isFinite(m.pos.x + m.pos.y + m.pos.z + m.omega)).toBe(true);
-    // po 30 s je ve vzduchu (visí nebo mírně stoupá podle přebytku vztlaku)
-    expect(m.pos.y).toBeGreaterThan(1.0);
-    expect(m.pos.y).toBeLessThan(2000);
+    expect(m.pos.y).toBeGreaterThan(3.0); // vzlétl
     expect(m.telemetry.omegaFrac).toBeGreaterThan(0.88); // governor drží Ω
-    // měkké přistání: stáhni kolektiv pozvolna a zapni Assist (změkčené přistání)
-    env.assist = true;
-    stepN(m, env, Math.ceil(10 / H), input({ collectiveRate: -1 }));
+    // puštění W → držení výšky: vertikální rychlost se ustálí kolem 0
+    stepN(m, env, Math.ceil(15 / H), input());
+    expect(m.altHold).toBe(true);
+    expect(Math.abs(m.vel.y)).toBeLessThan(1.0);
+    // přistání: S (klesání −8 m/s max) → měkký kontakt bez crashi
+    stepN(m, env, Math.ceil(5 / H), input({ collectiveRate: -1 }));
     stepN(m, env, Math.ceil(40 / H), input());
     expect(m.crashed).toBe(false);
     expect(m.telemetry.onGround).toBe(true);
+  });
+
+  it('TEST KLIDU (17.1): 60 s hover bez vstupu — max úhlová rychlost < 1°/s', () => {
+    const m = new FlightModel(type);
+    m.reset(0, 2.7, 0);
+    const env = flatEnv(-1e6, 'stabilized'); // bez země, čistý let
+    stepN(m, env, Math.ceil(1 / H), input({ engineStart: true }));
+    stepN(m, env, Math.ceil(25 / H), input());
+    expect(m.engine).toBe('running');
+    // nech stoupat na výšku a ustálit se (alt-hold)
+    stepN(m, env, Math.ceil(8 / H), input({ collectiveRate: 1 }));
+    stepN(m, env, Math.ceil(20 / H), input());
+    // 60 s klidu bez jakéhokoli vstupu
+    let maxRate = 0;
+    for (let i = 0; i < Math.ceil(60 / H); i++) {
+      m.step(input(), env, H);
+      env.time += H;
+      maxRate = Math.max(maxRate, Math.abs(m.pitchRate), Math.abs(m.rollRate), Math.abs(m.yawRate));
+    }
+    const maxDegS = maxRate * 180 / Math.PI;
+    console.log(`[TEST KLIDU] 60 s hover, max |úhlová rychlost| = ${maxDegS.toFixed(4)} °/s (limit 1 °/s)`);
+    expect(maxDegS).toBeLessThan(1.0);
+    expect(m.crashed).toBe(false);
+  });
+
+  it('držení výšky (6.3b): zvednutí nákladu nezpůsobí skok ani prohloubení', () => {
+    const m = new FlightModel(type);
+    m.reset(0, 2.7, 0);
+    const env = flatEnv(-1e6, 'stabilized');
+    stepN(m, env, Math.ceil(1 / H), input({ engineStart: true }));
+    stepN(m, env, Math.ceil(25 / H), input());
+    stepN(m, env, Math.ceil(6 / H), input({ collectiveRate: 1 }));
+    stepN(m, env, Math.ceil(15 / H), input()); // ustálený hover s alt-hold
+    const y0 = m.pos.y;
+    // náklad 2 000 kg na háku — hmotnost přejde do soustavy
+    env.loadMass = 2000;
+    let maxSink = 0;
+    for (let i = 0; i < Math.ceil(10 / H); i++) {
+      m.step(input(), env, H);
+      env.time += H;
+      maxSink = Math.min(maxSink, m.vel.y);
+    }
+    // žádný skok: nejvýš mírný propad, výška se plynule doladí
+    expect(maxSink).toBeGreaterThan(-3.0);
+    expect(Math.abs(m.pos.y - y0)).toBeLessThan(15);
+    expect(m.crashed).toBe(false);
+    expect(m.altHold).toBe(true);
   });
 
   it('autorotace: při výpadku motoru rotor nezastaví, klesání je řízené, energie se netvoří', () => {

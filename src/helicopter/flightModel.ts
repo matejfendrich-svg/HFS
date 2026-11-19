@@ -10,7 +10,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { PHYSICS, CONTROLS, GAMEPLAY, type HeliTypeConfig, type FlightMode } from '../config';
+import { PHYSICS, ALT_HOLD, GAMEPLAY, type HeliTypeConfig, type FlightMode } from '../config';
 import { clamp, lerp, smoothstep, wrapAngle, DEG } from '../utils/math';
 import type { TreeInstance } from '../world/terrain';
 
@@ -30,8 +30,7 @@ export interface FlightEnv {
   heightAt: (x: number, z: number) => number;
   treesNear: (x: number, z: number, r: number) => TreeInstance[];
   time: number;             // herní čas [s] (turbulence)
-  assist: boolean;          // režim "Assist" (měkké přistání)
-  mode: FlightMode;         // letový režim: manual / stabilized / hover / autopilot
+  mode: FlightMode;         // letový režim (jen tlumení; řídicí vrstva je vždy stejná, 5.4)
   attachForce: THREE.Vector3; // síla lana na závěsný bod (world) — nastaví ropeSim
   loadMass: number;         // hmotnost nákladu [kg] (0 = bez nákladu)
 }
@@ -53,6 +52,8 @@ export interface FlightTelemetry {
   rotorLow: boolean;
   retreating: boolean;
   onGround: boolean;
+  altHold: boolean;
+  targetVy: number;
   energy: number;
   totalMass: number;
   weightN: number;
@@ -71,6 +72,8 @@ export class FlightModel {
   rollRate = 0;
   omega = 0;                 // rad/s hlavního rotoru
   collective = 0;            // 0..1
+  targetVy = 0;              // cílová vertikální rychlost [m/s] (W/S příkaz, 6.3)
+  altHold = false;           // držení výšky aktivní (6.3b, HUD ikonka)
   pedal = 0;                 // aktuální pedál (vyhlazený)
   fuelKg: number;
   engine: EngineState = 'off';
@@ -82,10 +85,12 @@ export class FlightModel {
   diskRoll = 0;
   attachForce = new THREE.Vector3();
   private prevEnginePower = 0;
+  private pEngineSmooth = 0;    // změkčený výkon motoru přes první řád (governor lagS)
   telemetry: FlightTelemetry = {
     thrustN: 0, powerKw: 0, inducedMs: 0, agl: 0, hubAgl: 0, airspeed: 0, horizSpeed: 0,
     sinkRate: 0, groundEffect: 1, etl: 1, vrs: false, vrsFactor: 1, omegaFrac: 0,
     rotorLow: false, retreating: false, onGround: false, energy: 0, totalMass: 0, weightN: 0,
+    altHold: false, targetVy: 0,
   };
 
   private readonly q = new THREE.Quaternion();
@@ -159,6 +164,9 @@ export class FlightModel {
     this.yawRate = 0; this.pitchRate = 0; this.rollRate = 0;
     this.omega = 0;
     this.collective = 0;
+    this.targetVy = 0;
+    this.altHold = false;
+    this.pEngineSmooth = 0;
     this.fuelKg = this.type.fuelMax;
     this.engine = 'off';
     this.engineTimer = 0;
@@ -206,10 +214,20 @@ export class FlightModel {
     const fuelOk = this.fuelKg > 0;
     if (engineRunning && !fuelOk) this.engine = 'dead'; // vysazení při vyschnutí nádrže
 
-    // --- 2. kolektiv (W/S nebo kolečko myši; W = více vztlaku) ---
-    // Mimo běh motoru povolujeme kolektiv jen pomalu (hydraulika bez tlaku).
-    const collRate = input.collectiveRate * CONTROLS.collectiveRate * (engineRunning ? 1 : 0.35);
-    this.collective = clamp(this.collective + collRate * dt, 0, 1);
+    // --- 2. měkký kolektiv s držením výšky (oddíl 6, body 3 a 3b) ---
+    // W/S (nebo kolečko) = příkaz VERTIKÁLNÍ RYCHLOSTI, náběh plynulý (vyRamp);
+    // po puštění drží stroj výšku: cílová vy klesá měkce k 0. Samotný kolektiv
+    // přestavuje až níže uzavřený regulátor přes vertikální zrychlení (níže).
+    const AH = ALT_HOLD;
+    if (input.collectiveRate !== 0) {
+      this.targetVy = clamp(this.targetVy + input.collectiveRate * AH.vyRamp * dt, AH.sinkMax, AH.climbMax);
+      this.altHold = false;
+    } else if (engineRunning) {
+      this.altHold = true; // držení výšky (HUD ikonka)
+      this.targetVy = lerp(0, this.targetVy, Math.exp(-AH.holdDecay * dt));
+    } else {
+      this.altHold = false; // motor neběží — pilot řídí přes cílovou vy (autorotace)
+    }
 
     // --- 3. orientace a rotorový disk ---
     this.quaternion();
@@ -243,6 +261,14 @@ export class FlightModel {
     const vrsActive = descent > P.vortexRing.descentStart && Vh < P.vortexRing.minHorizSpeed && T > P.vortexRing.minThrustFrac * weight;
     if (vrsActive) vrsFactor = lerp(1, P.vortexRing.minFactor, smoothstep(P.vortexRing.descentStart, P.vortexRing.descentFull, descent));
     T = T * ge * etl * vrsFactor;
+
+    // --- 2b. uzavřený měkký regulátor kolektivu přes vertikální zrychlení (6.3/3b) ---
+    // Zvednutí nákladu nezpůsobí skok — regulátor doladí kolektiv plynule přes aZ.
+    const aZ = (T * n.y - weight) / m;
+    const aDes = clamp((this.targetVy - this.vel.y) * AH.kADes, -AH.aDesMax, AH.aDesMax);
+    let colErr = (aDes - aZ) * AH.kAColl;
+    if (this.telemetry.onGround && this.targetVy <= 0) colErr = Math.min(colErr, -0.02); // na zemi jen klesat
+    this.collective = clamp(this.collective + clamp(colErr, -AH.maxCollRate, AH.maxCollRate) * dt, 0, 1);
 
     // --- 6. indukovaná rychlost (teorie momentu) + výkon rotoru ---
     // T = 2ρA·u·sqrt(Vh² + (u+Vn)²). V čistém svislém sestupu existují dvě
@@ -280,8 +306,10 @@ export class FlightModel {
       const ramp = clamp(this.engineTimer / seq.spoolS, 0, 1);
       pEngine = clamp(Math.max(pRotor + P.governor.gain * (omegaNom - this.omega), pMax * ramp * 0.5), 0, pMax * Math.max(ramp, 0.35));
     }
+    // změkčený governor: výkon motoru přes první řád s prodlevou lagS → hladké Ω (17.7)
+    this.pEngineSmooth = lerp(this.pEngineSmooth, pEngine, 1 - Math.exp(-dt / P.governor.lagS));
     if (this.engine !== 'cranking' && this.engine !== 'lightoff') {
-      const dOmega = (pEngine - pRotor) / (t.rotorInertia * Math.max(this.omega, 0.5)) * dt;
+      const dOmega = (this.pEngineSmooth - pRotor) / (t.rotorInertia * Math.max(this.omega, 0.5)) * dt;
       this.omega = clamp(this.omega + dOmega, 0, omegaNom * 1.12);
     }
     const dPowerDt = (pEngine - this.prevEnginePower) / dt;
@@ -329,15 +357,8 @@ export class FlightModel {
     const authority = 1 - P.retreatingStall.maxAuthorityLoss * smoothstep(P.retreatingStall.start, P.retreatingStall.full, V);
     let tgtPitch = clamp(input.targetPitch, -A.maxPitchDeg * DEG, A.maxPitchDeg * DEG) * authority;
     let tgtRollE = clamp(-input.targetRoll, -A.maxRollDeg * DEG, A.maxRollDeg * DEG) * authority; // euler roll: + vlevo
-    // stabilizované režimy: při neutrální páce gyro vrací stroj do vodorovné polohy
-    // (režimy „stabilized“/„hover“/„autopilot“; v „manual“ jen volitelný Assist)
-    const autoLevel = env.mode !== 'manual' || env.assist;
-    const deadband = env.mode === 'hover' || env.mode === 'autopilot'
-      ? GAMEPLAY.hover.autoLevelDeadband : GAMEPLAY.stabilized.autoLevelDeadband;
-    if (autoLevel && Math.abs(input.targetPitch) < deadband && Math.abs(input.targetRoll) < deadband) {
-      tgtPitch = dampAngle(tgtPitch, 0, 3.5, dt);
-      tgtRollE = dampAngle(tgtRollE, 0, 3.5, dt);
-    }
+    // POZNÁMKA (6.7c): žádný auto-level — po puštění myši drží vrtulník ustálený náklon.
+    // Režimy mění jen tlumení (stabilizovaný = „přibitější“, jak požadoval zadavatel).
     // vyšší tlumení náklonu ve stabilizovaných režimech (méně „klepání“, rychlejší odezva)
     const kD = A.kD * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kDMultiplier : GAMEPLAY.stabilized.kDMultiplier));
     const kP = A.kP * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kPMultiplier : GAMEPLAY.stabilized.kPMultiplier));
@@ -379,6 +400,8 @@ export class FlightModel {
     tel.omegaFrac = this.omega / omegaNom;
     tel.rotorLow = this.omega < omegaNom * P.rotorMinFrac && this.engine !== 'off';
     tel.retreating = retreating;
+    tel.altHold = this.altHold;
+    tel.targetVy = this.targetVy;
     tel.energy = this.energy();
     tel.totalMass = m;
     tel.weightN = weight;
@@ -390,9 +413,7 @@ export class FlightModel {
     // terén pod trupem (koule kolem těžiště + spodní část trupu)
     const h = env.heightAt(this.pos.x, this.pos.z);
     const bottomOffset = 2.7; // nejnižší bod trupu/podvozku pod těžištěm
-    // stabilizované režimy / Assist: změkčené přistání — těsně nad zemí omezí sestup (5.4)
-    const softLand = env.assist || env.mode !== 'manual';
-    if (softLand && this.pos.y - h < 3 && this.vel.y < -2) this.vel.y = -2;
+    // přistání bez „polštářového“ odpružení (oddíl 2): jen odraz a tření
     let onGround = false;
     if (this.pos.y - bottomOffset < h) {
       const impact = -this.vel.y;
@@ -458,6 +479,3 @@ export class FlightModel {
   }
 }
 
-function dampAngle(a: number, b: number, lambda: number, dt: number): number {
-  return lerp(b, a, Math.exp(-lambda * dt));
-}

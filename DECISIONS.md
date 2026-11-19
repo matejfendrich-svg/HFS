@@ -87,9 +87,38 @@ v `src/config.ts`.
     rozostřovací disk leží správně v rovině YZ. Další detaily: vodorovný stabilizátor,
     šípovitá ocasní plocha, přistávací světlo, stupínky, madla na kostře, vítrník,
     víčka nádrží, brzda rotoru. Celkem 3 524 tri (limit 5 000).
-24. **„Zbržděná“ arkádová fyzika (požadavek zadavatele):** ve režimech stabilized /
-    hover / autopilot se přidává lineární útlum rychlosti (vodorovný 1,5–3,2 1/s,
-    svislý 0,7–1,0 1/s) a vyšší kP/kD náklonu — stroj se po puštění páky rychle
-    „zastaví“ jako ve Construction Simulator. **Reálné rychlosti jsou zachované** —
-    jde jen o tlumení, žádné omezení maximální rychlosti. V režimu `manual` zůstává
-    čistá fyzika (setrvačnost, bez útlumu).
+24. **„Zbržděná“ arkádová fyzika (požadavek zadavatele):** v přídavných režimech
+    stabilized / hover / autopilot se přidává lineární útlum rychlosti (vodorovný
+    1,2–2,6 1/s, svislý 0,5–0,8 1/s) a vyšší kP/kD náklonu — stroj se po puštění páky
+    rychle „zastaví“ jako ve Construction Simulator. **Reálné rychlosti jsou zachované**
+    — jde jen o tlumení, žádné omezení maxima. V režimu `manual` je čistá fyzika
+    (setrvačnost, bez útlumu).
+25. **Záplata §17 (revidované zadání v2) — implementováno jako `fix(uhlazeni)`:**
+    - **Test klidu (17.1):** 60 s hover bez vstupu, max |úhlová rychlost| =
+      **0,0043 °/s** (limit 1 °/s; výsledek loguje i vitest). Trup se vizuálně
+      nekmitá — chvění bylo přesunuto jen na kameru (mikro-otřesy < 0,2°,
+      `CAMERA.microShakeMaxDeg`, škálované podle Ω). Turbulence je jen
+      nízkofrekvenční drift (perioda sekundy, Δv < ±0,3 m/s), vypínatelná přes
+      `PHYSICS.turbulence_intensity = 0` (výchozí 0,12).
+    - **Měkký kolektiv + držení výšky (6.3/3b):** W/S = příkaz vertikální rychlosti
+      (náběh 1,5 (m/s)/s, limity +5/−8 m/s); kolektiv řídí uzavřený regulátor přes
+      vertikální zrychlení (`ALT_HOLD`: kADes/kAColl, limit přestavby 0,3/s) — bez
+      překmitů i při zvednutí nákladu (testováno: max propad < 3 m/s, plynulé doladění).
+      Po puštění W/S drží výšku (indikátor „DRŽÍ“ v HUD).
+    - **Assist/Real odstraněny (5.4/17.3):** jedna stálá řídicí vrstva (filtr páky,
+      alt-hold, změkčený governor s prodlevou `lagS` = 1,2 s). Volitelné přídavné
+      režimy stabilizovaný/hover/autopilot (požadované zadavatelem dříve) zůstávají
+      jen jako tlumení/tlumení+autopilot NAD základní vrstvou; **žádný auto-level**
+      (6.7c: po puštění myši drží ustálený náklon).
+    - **Filtr joysticku (6.2b):** dolnopropust τ = 0,1 s (`stickSmoothing`), mrtvá
+      zóna 5 %, limit změny cílového náklonu 150°/s; HUD ukazuje filtrovanou páku.
+    - **Kamera (6.5a–c):** vyhlazení polohy i orientace τ = 0,3 s, roll kamery jen
+      25 % náklonu stroje, kolize proti terénu i kmenům, zoom 8–30 m (`+`/`−`,
+      kolečko při volném rozhledu — kolečko jinak řídí vertikální rychlost dle 6.3;
+      rozmezí 4–15 m ze zadání by u 21,5 m stroje bylo uvnitř ocasu). Volný rozhled
+      pravým tlačítkem běží současně s řízením, páka drží poslední polohu, návrat je měkký.
+    - **Hook cam (6.5d):** klávesa H cykluje hlavní → obraz v obrazu (pravý dolní roh,
+      kamera pod trupem podél lana) → celá obrazovka; HUD ukazuje vzdálenost háku od
+      cíle (kmene) v metrech; režim se pamatuje v localStorage.
+    - **Prach u země** od rotorového proudění (17.7, minimální varianta částic).
+    - HUD: ukazatel páky, indikátor držení výšky, napětí lana v %.

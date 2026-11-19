@@ -138,7 +138,8 @@ export const PHYSICS = {
   retreatingStall: { start: 38, full: 55, maxAuthorityLoss: 0.55, buffetAmp: 0.012 },
   maxSpeed: 62,                 // Vne herní [m/s] ~ 120 kt
   // Governor otáček rotoru: při přetížení kolektivem Ω mírně propadá.
-  governor: { gain: 2.2e7, maxPowerFrac: 1.0 }, // P = P_req + gain·(Ω_nom−Ω), omezeno P_max
+  // Změkčení přes první řád s prodlevou lagS — náběh i pokles Ω působí hladce (17.7).
+  governor: { gain: 2.2e7, maxPowerFrac: 1.0, lagS: 1.2 },
   rotorMinFrac: 0.55,           // pod touto frakcí Ω_nom "rotorový stall" (varování)
   // Řídicí vrstva náklonu (oddíl 6.2): cyklika = P·chyba − D·rychlost.
   attitude: {
@@ -151,9 +152,13 @@ export const PHYSICS = {
     maxRollDeg: 50,
     reactionTorqueCoupling: 2.5e-6, // vliv změny výkonu motoru na zatáčení (oddíl 5.1)
   },
-  // Turbulence / kyvadlový pocit (oddíl 5.4).
-  turbulence: { amp: 0.006, freq: 0.9 },
-  buffet: { amp: 0.02 },       // chvění při vysoké rychlosti / těžkém nákladu
+  // Turbulence (oddíl 5.4, revidováno): POUZE nízkofrekvenční pomalý drift
+  // rychlosti/polohy (perioda sekundy, Δv < ±0,3 m/s) — žádné chvění trupu.
+  // Vypínatelné přes turbulence_intensity (0 = vypnuto, výchozí velmi nízká).
+  turbulence_intensity: 0.12,   // 0..1, škála driftu (maxDeltaV 0,3 m/s)
+  turbulence_maxDeltaV: 0.3,    // m/s
+  turbulence_freq: 0.22,        // Hz, nízkofrekvenční
+  buffet: { amp: 0.012 },       // jen kamerové mikro-otřesy (< 0,2°), NE na trup
   // Kolize: tvrdý náraz při přistání.
   crash: { maxSinkRate: 8, rotorStrikeOmegaFrac: 0.5, restitution: 0.25, groundFriction: 0.86 },
   fuel: { kgPerKwPerS: 0.000078, minFlowKgS: 0.02 }, // ~280 kg/h při plném výkonu
@@ -170,11 +175,13 @@ export const CONTROLS = {
   maxRollDeg: 50,               // maxRoll cca ±50°
   expoDefault: 0.2,             // exponenciální křivka 0,0–0,5, výchozí 0,2
   expoCurve: 2.0,               // out = sign(in)·|in|^(1+expo·expoCurve)
-  deadZone: 0.04,               // mrtvá zóna 3–5 %
+  deadZone: 0.05,               // mrtvá zóna 5 % (oddíl 6, bod 2b)
   stickRadiusFrac: 0.42,        // poloměr virtuální páky jako zlomek min(w,h)
+  stickSmoothingTau: 0.1,       // dolnopropustní filtr polohy páky 80–120 ms (6.2b)
+  stickSmoothingDefault: 0.1,
+  targetRateLimitDegS: 150,     // limit rychlosti změny cílového náklonu (6.2b)
   sensitivityDefault: 1.0,      // násobič citlivosti myši
   invertYDefault: false,        // konvence myš nahoru = příď dolů (stíhačky)
-  collectiveRate: 0.55,         // rychlost změny kolektivu W/S [1/s]
   trimStep: 0.02,               // krok trimu
   keys: {
     collectiveUp: ['KeyW'], collectiveDown: ['KeyS'],
@@ -188,12 +195,27 @@ export const CONTROLS = {
     help: ['F1'], telemetry: ['F3'], quickSave: ['F5'],
     engineCutTest: ['KeyT'],      // testovací výpadek motoru (oddíl 5.3)
     cameraView: ['KeyX'],
-    assistToggle: ['KeyG'],
+    hookCam: ['KeyH'],            // pohled na naviják: hlavní → PiP → celá obrazovka (6.5d)
+    zoomIn: ['Equal', 'NumpadAdd'], zoomOut: ['Minus', 'NumpadSub'],
     pause: ['Escape'],
     nextShift: ['Enter'],
     settings: ['KeyO'],           // panel nastavení (čas, vítr, bouřka, test, režim letu)
     modeCycle: ['KeyP'],          // cykluje letový režim Manual/Stabilizovaný/Hover/Autopilot
   },
+} as const;
+
+// Měkký kolektiv s držením výšky (oddíl 6, body 3 a 3b):
+// W/S dává příkaz vertikální RYCHLOSTI (náběh vyRamp), kolektiv řídí měkký
+// uzavřený regulátor; po puštění W/S se drží výška (cílová vy → 0, měkké zásahy).
+export const ALT_HOLD = {
+  vyRamp: 1.5,        // (m/s) za sekundu držení klávesy
+  climbMax: 5,        // m/s
+  sinkMax: -8,        // m/s
+  kADes: 1.2,         // P regulátor cílové vertikální rychlosti → cílové zrychlení [1/s]
+  aDesMax: 3,         // max cílové vertikální zrychlení [m/s²]
+  kAColl: 0.3,        // zesílení zpětné vazby zrychlení → kolektiv [1/(m/s²)]
+  maxCollRate: 0.3,   // max rychlost přestavby kolektivu [1/s]
+  holdDecay: 0.5,     // jak rychle cílová vy přejde na 0 po puštění (alt-hold)
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -236,13 +258,24 @@ export const MISSION = {
 // ---------------------------------------------------------------------------
 export const CAMERA = {
   // POZNÁMKA (viz DECISIONS.md): zadání uvádí 6 m za strojem, ale SH-6 má trup
-  // 21,5 m a rotor 21,9 m — 6 m by byla kamera uvnitř ocasu. Zvoleno 17 m / 5 m.
+  // 21,5 m a rotor 21,9 m — 6 m by byla kamera uvnitř ocasu. Základ 17 m / 5 m,
+  // zoom kolečkem (při volném rozhledu) nebo +/- v rozmezí zoomMin–zoomMax.
   chaseDist: 17,
   chaseHeight: 5,
   lookAhead: 6,
-  smoothing: 6.0,               // dofukování [1/s]
+  smoothingTau: 0.3,            // vyhlazení polohy i orientace, τ = 0,3 s (6.5a)
+  rollFactor: 0.25,             // kamera přebírá jen 20–30 % roll stroje (6.5c)
+  zoomMin: 8,
+  zoomMax: 30,
+  zoomDefault: 17,
+  fovDefault: 62,
+  fovMin: 40,
+  fovMax: 90,
+  microShakeMaxDeg: 0.2,        // jediné povolené chvění — kamerové, < 0,2° (5.4)
   views: ['chase', 'cockpit', 'high', 'side'],
+  hookCamModes: ['off', 'pip', 'full'] as const, // H cykluje (6.5d)
 };
+export type HookCamMode = (typeof CAMERA.hookCamModes)[number];
 
 export const TIME = {
   dayLengthMin: 24,             // délka dne ve hře (reálných minut)
@@ -285,9 +318,11 @@ export const GAMEPLAY = {
   // stabilizovaný režim („arkádově zbržděný“, jako Construction Simulator, ale reálné
   // rychlosti): vyšší tlumení náklonu, auto-level, silný lineární útlum rychlosti
   // (vodorovně i svisle) — stroj se po puštění páky rychle „zastaví“, ale letí reálně
-  stabilized: { kPMultiplier: 1.7, kDMultiplier: 2.6, autoLevelDeadband: 0.07, horizDamp: 1.5, vertDamp: 0.7, vibScale: 0.35 },
-  // hover: držení pozice — velmi silné tlumení vodorovné rychlosti, výšku drží kolektiv
-  hover: { kPMultiplier: 1.9, kDMultiplier: 2.8, autoLevelDeadband: 0.05, horizDamp: 3.2, vertDamp: 1.0, vibScale: 0.3, altHoldGain: 0.35 },
+  // POZNÁMKA: žádný auto-level — po puštění myši drží vrtulník ustálený náklon (6.7c).
+  // Režimy mění jen tlumení (stabilizovaný = „přibitější“, jak požadoval zadavatel).
+  stabilized: { kPMultiplier: 1.4, kDMultiplier: 2.4, horizDamp: 1.2, vertDamp: 0.5, vibScale: 0.35 },
+  // hover: držení pozice — silné tlumení rychlosti (výšku drží globální alt-hold)
+  hover: { kPMultiplier: 1.6, kDMultiplier: 2.6, horizDamp: 2.6, vertDamp: 0.8, vibScale: 0.3, altHoldGain: 0.35 },
   // autopilot: letí na aktuální cíl mise (kmen, nebo odkládací plocha), pak hover
   autopilot: {
     maxSpeed: 13,               // m/s
@@ -323,10 +358,15 @@ export const RENDER = {
 };
 
 export const SETTINGS_DEFAULTS = {
-  assist: false,                // „Assist“ (gyro hover, měkké přistání) / „Real“
+  // POZNÁMKA (oddíl 5.4/17.3): režimy Assist/Real byly odstraněny — řídicí vrstva
+  // je jedna a stálá (filtrovaná myš, držení výšky, změkčený governor), vždy zapnutá.
   invertY: CONTROLS.invertYDefault,
   expo: CONTROLS.expoDefault,
   sensitivity: CONTROLS.sensitivityDefault,
+  stickSmoothing: CONTROLS.stickSmoothingDefault, // τ filtru páky [s]
+  fov: CAMERA.fovDefault,
+  zoom: CAMERA.zoomDefault,
+  hookCam: 'off' as HookCamMode, // poslední režim hook kamery (pamatuje si ho hra)
   muted: false,
   // „témata“ a režimy v panelu nastavení (klávesa O)
   timeOfDay: 'auto' as TimeOfDayPreset,

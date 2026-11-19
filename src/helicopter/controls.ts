@@ -4,14 +4,17 @@
 // výchylka virtuální páky (kritéria 6.7a–d). Klávesy: kolektiv W/S, pedály A/D.
 // ============================================================================
 
-import { CONTROLS, GAMEPLAY, SETTINGS_DEFAULTS, type TimeOfDayPreset, type FlightMode } from '../config';
-import { clamp, expoCurve, deadZone, DEG } from '../utils/math';
+import { CONTROLS, GAMEPLAY, SETTINGS_DEFAULTS, type TimeOfDayPreset, type FlightMode, type HookCamMode } from '../config';
+import { clamp, expoCurve, deadZone, DEG, damp } from '../utils/math';
 
 export interface ControlSettings {
-  assist: boolean;
   invertY: boolean;
   expo: number;
   sensitivity: number;
+  stickSmoothing: number;       // τ dolnopropustního filtru páky [s] (6.2b)
+  fov: number;                  // FOV kamery
+  zoom: number;                 // vzdálenost chase kamery [m]
+  hookCam: HookCamMode;         // off / pip / full (6.5d)
   muted: boolean;
   timeOfDay: TimeOfDayPreset;  // den/noc/soumrak/auto cyklus
   windLevel: number;            // index do WEATHER.windLevels
@@ -31,7 +34,10 @@ export interface ControlOutput {
   engineCut: boolean;
   trimPressed: boolean;
   cameraViewPressed: boolean;
-  assistToggle: boolean;
+  hookCamPressed: boolean;      // H — pohled na naviják (6.5d)
+  zoomIn: boolean;
+  zoomOut: boolean;
+  zoomWheel: number;            // kolečko při volném rozhledu = zoom (6.5a)
   mutePressed: boolean;
   helpPressed: boolean;
   telemetryPressed: boolean;
@@ -61,13 +67,18 @@ export class Controls {
   settings: ControlSettings = { ...SETTINGS_DEFAULTS };
   // virtuální páka: x doprava, y nahoru, obojí v [-1, 1]
   stick = { x: 0, y: 0 };
+  // filtrovaná poloha páky (dolnopropustní, τ = stickSmoothing) — do ní jde surová
+  // poloha; HUD ukazuje právě tuto filtrovanou hodnotu (6.2b, 10)
+  stickFiltered = { x: 0, y: 0 };
   trim = { x: 0, y: 0 };
+  private prevTarget = { pitch: 0, roll: 0 }; // pro limit rychlosti změny cíle (6.2b)
   private keysDown = new Set<string>();
   private pressed = new Set<string>(); // stisknuto v tomto snímku
   private canvas: HTMLElement;
   private pointerLocked = false;
   private wheelCollective = 0;
   private wheelWinch = 0;
+  private wheelZoom = 0;
   private lockedAccum = { x: 0, y: 0 };
   // při držení pravého tlačítka se myš věnuje volnému rozhledu místo páce
   readonly freeDelta = { x: 0, y: 0 };
@@ -122,7 +133,10 @@ export class Controls {
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const step = e.deltaY < 0 ? 0.06 : -0.06;
-      if (e.shiftKey && GAMEPLAY.wheelWinchWithShift) {
+      if (this.keysDown.has('__rmb__')) {
+        // při volném rozhledu kolečko zoomuje kameru (6.5a)
+        this.wheelZoom = clamp(this.wheelZoom + step * 2, -1, 1);
+      } else if (e.shiftKey && GAMEPLAY.wheelWinchWithShift) {
         this.wheelWinch = clamp(this.wheelWinch + step, -1, 1); // Shift + kolečko = naviják
       } else {
         this.wheelCollective = clamp(this.wheelCollective + step, -1, 1);
@@ -172,21 +186,31 @@ export class Controls {
     return codes.some((c) => this.keysDown.has(c));
   }
 
-  // Vrací výstup pro tento snímek; musí se volat jednou za frame.
-  output(): ControlOutput {
+  // Vrací výstup pro tento snímek; musí se volat jednou za frame (s frame dt).
+  output(dt: number): ControlOutput {
     const s = this.settings;
     const K = CONTROLS.keys;
+    // 6.2b: surová poloha páky přes dolnopropustní filtr (τ) — cuknutí myši se nedostane dál
+    const tau = Math.max(0.01, s.stickSmoothing || CONTROLS.stickSmoothingDefault);
+    this.stickFiltered.x = damp(this.stickFiltered.x, this.stick.x, 1 / tau, dt);
+    this.stickFiltered.y = damp(this.stickFiltered.y, this.stick.y, 1 / tau, dt);
     // výchylka páky po trimu → mrtvá zóna, expo křivka, citlivost (6.1)
     const mapped = mapStick(
-      clamp(this.stick.x - this.trim.x, -1, 1),
-      clamp(this.stick.y - this.trim.y, -1, 1),
+      clamp(this.stickFiltered.x - this.trim.x, -1, 1),
+      clamp(this.stickFiltered.y - this.trim.y, -1, 1),
       s,
     );
     const sx = mapped.x;
     const sy = mapped.y;
     // proporcionální mapování (6.1): target úhel = výchylka · max úhel
-    const targetPitch = -sy * CONTROLS.maxPitchDeg * DEG; // myš nahoru = příď dolů (stíhačky)
-    const targetRoll = sx * CONTROLS.maxRollDeg * DEG;    // myš doprava = náklon doprava
+    let targetPitch = -sy * CONTROLS.maxPitchDeg * DEG; // myš nahoru = příď dolů (stíhačky)
+    let targetRoll = sx * CONTROLS.maxRollDeg * DEG;    // myš doprava = náklon doprava
+    // 6.2b: limit rychlosti změny cílového náklonu (žádné trhavé cukání)
+    const maxRate = CONTROLS.targetRateLimitDegS * DEG * dt;
+    targetPitch = this.prevTarget.pitch + clamp(targetPitch - this.prevTarget.pitch, -maxRate, maxRate);
+    targetRoll = this.prevTarget.roll + clamp(targetRoll - this.prevTarget.roll, -maxRate, maxRate);
+    this.prevTarget.pitch = targetPitch;
+    this.prevTarget.roll = targetRoll;
 
     const collectiveRate =
       (this.isDown(K.collectiveUp) ? 1 : 0) + (this.isDown(K.collectiveDown) ? -1 : 0) + this.wheelCollective;
@@ -209,7 +233,10 @@ export class Controls {
       engineCut: this.anyPressed(K.engineCutTest),
       trimPressed: this.anyPressed(K.trim),
       cameraViewPressed: this.anyPressed(K.cameraView),
-      assistToggle: this.anyPressed(K.assistToggle),
+      hookCamPressed: this.anyPressed(K.hookCam),
+      zoomIn: this.isDown(K.zoomIn),
+      zoomOut: this.isDown(K.zoomOut),
+      zoomWheel: this.wheelZoom,
       mutePressed: this.anyPressed(K.mute),
       helpPressed: this.anyPressed(K.help),
       telemetryPressed: this.anyPressed(K.telemetry),
@@ -226,6 +253,7 @@ export class Controls {
       this.trim.y = clamp(this.trim.y + this.stick.y, -0.6, 0.6);
     }
     this.pressed.clear();
+    this.wheelZoom *= 0.85;
     return out;
   }
 

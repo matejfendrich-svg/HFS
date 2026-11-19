@@ -19,6 +19,7 @@ import { RopeSim, type RopeEnv } from './rope/ropeSim';
 import { Mission } from './game/mission';
 import { Hud } from './ui/hud';
 import { SoundEngine } from './audio/sound';
+import { CameraRig } from './helicopter/camera';
 
 type GameState = 'menu' | 'playing' | 'paused';
 
@@ -59,16 +60,14 @@ class Game {
   private fps = 60;
   private showHelp = false;
   private showTelemetry = false;
-  private camView = 0;
-  private freeYaw = 0;
-  private freePitch = 0;
+  private camRig!: CameraRig;
+  private dust: THREE.Points | null = null;
   private crashTimer = 0;
   private wasRopeBroken = false;
   private settingsOpen = false;
   private rain: THREE.Points | null = null;
   private lightningTimer = 0;
   private nightFrac = 0;
-  private hoverAnchorAlt = 0;
   private stormActive = false;
   private lastMode = '';
   // interpolace: stav před posledním fyzikálním krokem
@@ -217,7 +216,6 @@ class Game {
       heightAt: (x, z) => this.world.heightAt(x, z),
       treesNear: (x, z, r) => this.world.treesNear(x, z, r),
       time: 0,
-      assist: false,
       mode: 'stabilized',
       attachForce: new THREE.Vector3(),
       loadMass: 0,
@@ -225,6 +223,18 @@ class Game {
 
     this.controls = new Controls(this.renderer.domElement);
     this.controls.loadSettings();
+    this.camRig = new CameraRig(this.controls.settings.fov, this.controls.settings.zoom);
+    this.camRig.hookCam = this.controls.settings.hookCam;
+    // prach od rotorového proudění při přiblížení k zemi (17.7, minimální varianta)
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(240 * 3);
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    this.dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+      color: 0xb9a98a, size: 0.5, transparent: true, opacity: 0.35, depthWrite: false,
+    }));
+    this.dust.visible = false;
+    this.dust.frustumCulled = false;
+    this.scene.add(this.dust);
     this.hud = new Hud(document.getElementById('ui')!);
     this.hud.bindStart(this.controls.settings, this.mission.money, this.mission.shift, () => this.startGame());
     this.hud.bindSettingsPanel(this.controls.settings, () => this.controls.saveSettings());
@@ -346,7 +356,7 @@ class Game {
     frameDt = Math.min(frameDt, 0.1);
     this.fps = lerp(this.fps, 1 / Math.max(frameDt, 1e-4), 0.05);
 
-    const input = this.controls.output();
+    const input = this.controls.output(frameDt);
     // globální klávesy
     if (input.helpPressed) this.showHelp = !this.showHelp;
     if (input.telemetryPressed) this.showTelemetry = !this.showTelemetry;
@@ -355,13 +365,21 @@ class Game {
       this.sound.setMuted(this.controls.settings.muted);
       this.controls.saveSettings();
     }
-    if (input.assistToggle) {
-      this.controls.settings.assist = !this.controls.settings.assist;
-      this.hud.message(this.controls.settings.assist ? 'Režim Assist (gyro hover)' : 'Režim Real', 2000);
+    if (input.cameraViewPressed) this.camRig.cycleView(CAMERA.views);
+    // hook cam (H): hlavní → obraz v obrazu → celá obrazovka → hlavní (6.5d, pamatuje si režim)
+    if (input.hookCamPressed) {
+      this.camRig.cycleHookCam();
+      this.controls.settings.hookCam = this.camRig.hookCam;
+      this.controls.saveSettings();
+      this.hud.message(this.camRig.hookCam === 'pip' ? 'Hook cam: obraz v obrazu' : this.camRig.hookCam === 'full' ? 'Hook cam: celá obrazovka' : 'Hook cam: vypnuto', 1500);
     }
-    if (input.cameraViewPressed) {
-      this.camView = (this.camView + 1) % CAMERA.views.length;
-      this.freeYaw = 0; this.freePitch = 0;
+    // zoom kamery (6.5a): +/- nebo kolečko při volném rozhledu (pravé tlačítko)
+    {
+      const s = this.controls.settings;
+      const dz = (input.zoomIn ? 12 * frameDt : 0) - (input.zoomOut ? 12 * frameDt : 0) + input.zoomWheel * 6;
+      if (dz !== 0) {
+        s.zoom = clamp(s.zoom + dz, CAMERA.zoomMin, CAMERA.zoomMax);
+      }
     }
     // panel nastavení (O) — při otevření se fyzika zastaví
     if (input.settingsPressed) {
@@ -378,7 +396,6 @@ class Game {
       const i = FLIGHT_MODES.indexOf(s.mode);
       s.mode = FLIGHT_MODES[(i + 1) % FLIGHT_MODES.length];
       this.controls.saveSettings();
-      this.hoverAnchorAlt = this.heli.pos.y;
       this.hud.message(`Režim: ${MODE_LABELS[s.mode]}`, 2000);
     }
     if (this.settingsOpen) {
@@ -398,13 +415,15 @@ class Game {
     }
     if (input.pausePressed && this.state === 'playing') { this.setPaused(true); return; }
     if (this.state === 'menu') {
-      // orbitální kamera na start obrazovce
+      // na start obrazovce kamera krouží kolem vrtulníku na heliportu
       const t = now / 1000;
-      const r = 46;
-      this.camera.position.set(Math.cos(t * 0.12) * r, this.world.heightAt(0, 0) + 16, Math.sin(t * 0.12) * r);
-      this.camera.lookAt(0, this.world.heightAt(0, 0) + 3, 0);
+      const r = 42;
+      const hy = this.world.heightAt(WORLD.heliport.x, WORLD.heliport.z);
+      this.camRig.reset();
+      this.camera.position.set(WORLD.heliport.x + Math.cos(t * 0.12) * r, hy + 15, WORLD.heliport.z + Math.sin(t * 0.12) * r);
+      this.camera.lookAt(WORLD.heliport.x, hy + 3, WORLD.heliport.z);
       this.updateEnvironment(frameDt);
-      this.render(0);
+      this.renderer.render(this.scene, this.camera);
       return;
     }
 
@@ -420,23 +439,20 @@ class Game {
     this.wind.set((WEATHER.windBase.x + gust) * windScale, 0, (WEATHER.windBase.z + gust * 0.6) * windScale);
     if (storm && Math.random() < WEATHER.storm.lightningChancePerS * frameDt) this.lightningTimer = 0.14;
     this.flightEnv.time = now / 1000;
-    this.flightEnv.assist = s.assist;
     this.flightEnv.mode = s.mode;
     this.stormActive = storm;
     if (s.testMode) this.showTelemetry = true;
     if (s.mode !== this.lastMode) {
       this.lastMode = s.mode;
-      this.hoverAnchorAlt = this.heli.pos.y;
       this.hud.setModeBadge(this.modeBadgeText());
     }
 
     // --- autopilot: generuje vstupy místo hráče (let na cíl mise, pak hover) ---
     if (s.mode === 'autopilot') this.applyAutopilot(input);
     else if (s.mode === 'hover') {
-      // hover: držení výšky (kotva při vstupu do režimu) + nulové náklony
+      // hover: nulové cílové náklony; výšku drží vestavěný alt-hold (6.3b)
       input.targetPitch = 0;
       input.targetRoll = 0;
-      input.collectiveRate = clamp((this.hoverAnchorAlt - this.heli.pos.y) * GAMEPLAY.hover.altHoldGain - this.heli.vel.y * 0.15, -0.4, 0.4);
     }
 
     // --- akce hráče ---
@@ -646,6 +662,33 @@ class Game {
         log.group.position.copy(hook).sub(attachLocal);
       }
     }
+    // prach od rotorového proudění při přiblížení k zemi (17.7, minimální varianta)
+    if (this.dust) {
+      const agl = this.heli.telemetry.agl;
+      const active = agl < 5 && this.heli.telemetry.omegaFrac > 0.7;
+      this.dust.visible = active;
+      if (active) {
+        const pos = this.dust.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const hub = this.heli.hubPos(this.tmpV3);
+        for (let i = 0; i < pos.count; i++) {
+          let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+          const dx = x - hub.x, dz = z - hub.z;
+          const d = Math.hypot(dx, dz) || 1;
+          x += (dx / d) * 6 * dt + (Math.random() - 0.5) * 2 * dt;
+          z += (dz / d) * 6 * dt + (Math.random() - 0.5) * 2 * dt;
+          y -= 2.5 * dt;
+          if (y < this.world.heightAt(x, z) + 0.2 || d > 14) {
+            const a = Math.random() * Math.PI * 2;
+            const r = (this.heliType.rotorDiameter / 2) * (0.5 + Math.random() * 0.5);
+            x = hub.x + Math.cos(a) * r;
+            z = hub.z + Math.sin(a) * r;
+            y = hub.y - 1 - Math.random() * 2;
+          }
+          pos.setXYZ(i, x, y, z);
+        }
+        pos.needsUpdate = true;
+      }
+    }
   }
 
   private updateHud(input: ReturnType<Controls['output']>): void {
@@ -686,10 +729,24 @@ class Game {
       prompt = `<span class="kbd">E</span> studený start motoru`;
     }
     const stickRadiusPx = Math.min(window.innerWidth, window.innerHeight) * CONTROLS.stickRadiusFrac;
+    // napětí lana v % nosnosti háku (oddíl 10)
+    const tensionFrac = clamp(this.rope.tension / (this.heliType.hookMaxLoad * PHYSICS.gravity), 0, 1.6);
+    // hook cam info (6.5d): vzdálenost háku od cíle (kmen) nebo od země
+    let hookInfo: string | null = null;
+    if (this.camRig.hookCam !== 'off') {
+      const hook = this.rope.hookPos;
+      const groundH = this.world.heightAt(hook.x, hook.z);
+      const cand = this.mission.pickupCandidate;
+      if (cand && !this.rope.attached) {
+        hookInfo = `hák → kmen #${cand.id + 1}: ${hook.distanceTo(cand.attachPoint()).toFixed(1)} m · nad zemí ${(hook.y - groundH).toFixed(1)} m`;
+      } else {
+        hookInfo = `hák nad zemí: ${(hook.y - groundH).toFixed(1)} m`;
+      }
+    }
     this.hud.update(
       tel, this.heli.collective, clamp(loadFrac, 0, 1.2), this.rope.length,
-      this.controls.stick, stickRadiusPx, this.mission, bearing, dist, label,
-      this.hour, (this.hour % 1) * 60, warnings, prompt,
+      this.controls.stickFiltered, stickRadiusPx, this.mission, bearing, dist, label,
+      this.hour, (this.hour % 1) * 60, warnings, prompt, tensionFrac, hookInfo,
     );
     this.hud.setHelp(this.showHelp);
     this.hud.setModeBadge(this.modeBadgeText());
@@ -720,67 +777,49 @@ class Game {
     const pitch = lerp(this.prev.pitch, this.heli.pitch, alpha);
     const roll = lerp(this.prev.roll, this.heli.roll, alpha);
     this.heliModel.group.position.copy(p);
+    // POZNÁMKA (5.4, revidováno): trup se NEkmitá — žádné vizuální chvění na modelu.
+    // Jediné chvění je kamerové mikro-otřesy < 0,2° (níže v applyMicroShake).
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, roll, 'YXZ'));
-    // drobné chvění podle Ω a zátěže (5.4) — čistě vizuální
-    const tel = this.heli.telemetry;
-    const s = this.controls.settings;
-    const loadFrac = this.rope.attached ? 0.6 : 0;
-    // chvění podle režimu (stabilizované režimy „ne klepou“) a bouřky
-    const modeVib = s.mode === 'manual' ? 1 : s.mode === 'hover' ? GAMEPLAY.hover.vibScale
-      : s.mode === 'autopilot' ? GAMEPLAY.autopilot.vibScale : GAMEPLAY.stabilized.vibScale;
-    const stormTurb = this.stormActive ? WEATHER.storm.turbulenceMultiplier : 1;
-    const vibAmp = (PHYSICS.turbulence.amp * (0.3 + 0.7 * tel.omegaFrac) * (1 + loadFrac) * modeVib * stormTurb)
-      + (tel.retreating ? PHYSICS.buffet.amp : 0);
-    const t = performance.now() / 1000;
-    q.x += (Math.sin(t * 31.7) + Math.sin(t * 47.3) * 0.5) * vibAmp;
-    q.z += (Math.sin(t * 27.1 + 1.3) + Math.sin(t * 41.7) * 0.5) * vibAmp;
     this.heliModel.group.quaternion.copy(q);
 
-    // kamera
+    // kamera přes CameraRig (vyhlazení τ=0,3 s, volný rozhled, kolize, roll 25 %)
+    const s = this.controls.settings;
+    if (Math.abs(this.camera.fov - s.fov) > 0.01) {
+      this.camera.fov = s.fov;
+      this.camera.updateProjectionMatrix();
+    }
+    this.camRig.zoom = s.zoom;
     const freeLook = this.controls.freeLookHeld();
-    const fd = this.controls.consumeFreeDelta();
-    if (freeLook) {
-      this.freeYaw -= fd.x * 0.0035;
-      this.freePitch = clamp(this.freePitch - fd.y * 0.0035, -1.2, 1.2);
-    } else if (this.camView === 0) {
-      this.freeYaw = lerp(this.freeYaw, 0, 0.05);
-      this.freePitch = lerp(this.freePitch, 0, 0.05);
-    }
-    const fwd = this.tmpV2.set(0, 0, -1).applyQuaternion(q);
-    const up = this.tmpV3.set(0, 1, 0).applyQuaternion(q);
-    const view = CAMERA.views[this.camView];
-    let camPos: THREE.Vector3;
-    let lookAt: THREE.Vector3;
-    if (view === 'cockpit') {
-      camPos = p.clone().addScaledVector(fwd, 2.0).addScaledVector(up, 1.4);
-      lookAt = p.clone().addScaledVector(fwd, 30).addScaledVector(up, 1.0);
-    } else if (view === 'high') {
-      camPos = p.clone().add(new THREE.Vector3(0, 38, 0));
-      lookAt = p.clone();
-    } else if (view === 'side') {
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      camPos = p.clone().addScaledVector(right, 20).add(new THREE.Vector3(0, 4, 0));
-      lookAt = p.clone();
-    } else {
-      // chase: 17 m za strojem, 5 m nad (viz DECISIONS.md)
-      const yawOff = this.freeYaw;
-      const pitchOff = this.freePitch;
-      const dist = CAMERA.chaseDist * (1 + pitchOff * 0.4);
-      const back = fwd.clone().multiplyScalar(-dist);
-      back.y += CAMERA.chaseHeight + pitchOff * 8;
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-      back.addScaledVector(right, -yawOff * 12);
-      camPos = p.clone().add(back);
-      lookAt = p.clone().addScaledVector(fwd, CAMERA.lookAhead).addScaledVector(up, 1.2);
-    }
-    // kamera nesmí pod terénem
-    const minCamY = this.world.heightAt(camPos.x, camPos.z) + 0.6;
-    if (camPos.y < minCamY) camPos.y = minCamY;
-    const k = 1 - Math.exp(-CAMERA.smoothing * (1 / 60));
-    this.camera.position.lerp(camPos, this.state === 'menu' ? 1 : k);
-    this.camera.lookAt(lookAt);
+    if (freeLook) this.camRig.freeLook(this.controls.consumeFreeDelta());
+    else this.controls.consumeFreeDelta();
+    this.camRig.update(1 / 60, p, q, freeLook, this.world, this.camera);
+    this.camRig.applyMicroShake(this.camera, this.heli.telemetry.omegaFrac);
 
-    this.renderer.render(this.scene, this.camera);
+    // hlavní render (nebo celá obrazovka hook cam)
+    if (this.camRig.hookCam === 'full') {
+      this.camRig.updateHookCam(p, q, this.rope.hookPos, s.fov);
+      this.camRig.hookCamera.aspect = window.innerWidth / window.innerHeight;
+      this.camRig.hookCamera.updateProjectionMatrix();
+      this.renderer.render(this.scene, this.camRig.hookCamera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+      // hook cam jako obraz v obrazu v pravém dolním rohu (6.5d)
+      if (this.camRig.hookCam === 'pip') {
+        const w = Math.floor(window.innerWidth * 0.32);
+        const h = Math.floor(w * 9 / 16);
+        const x = window.innerWidth - w - 16;
+        const y = window.innerHeight - h - 16;
+        this.camRig.updateHookCam(p, q, this.rope.hookPos, s.fov);
+        this.camRig.hookCamera.aspect = w / h;
+        this.camRig.hookCamera.updateProjectionMatrix();
+        this.renderer.setScissorTest(true);
+        this.renderer.setViewport(x, y, w, h);
+        this.renderer.setScissor(x, y, w, h);
+        this.renderer.render(this.scene, this.camRig.hookCamera);
+        this.renderer.setScissorTest(false);
+        this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+      }
+    }
   }
 }
 

@@ -24,10 +24,10 @@ describe('myší řízení (6.7)', () => {
     expect(-m.y * CONTROLS.maxPitchDeg * DEG).toBeCloseTo(CONTROLS.maxPitchDeg * DEG, 6);
   });
 
-  it('mrtvá zóna 3–5 % dává nulu, okraj plynulý', () => {
-    expect(mapStick(0.03, 0, base).x).toBe(0);
-    expect(mapStick(0.05, 0, base).x).toBeCloseTo(0.05, 6);
-    expect(mapStick(-0.04, 0, base).x).toBe(0);
+  it('mrtvá zóna 5 % dává nulu, okraj plynulý (6.2b)', () => {
+    expect(mapStick(0.04, 0, base).x).toBe(0);
+    expect(mapStick(0.06, 0, base).x).toBeCloseTo(0.06, 6);
+    expect(mapStick(-0.049, 0, base).x).toBe(0);
   });
 
   it('expo křivka zjemní střed a zachovává okraje', () => {
