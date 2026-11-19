@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rotor Logger — vrtulníková těžba dřeva</title>
+  <style>
+    :root {
+      --panel: rgba(16, 22, 28, 0.72);
+      --panel-border: rgba(255, 255, 255, 0.14);
+      --accent: #ff9a3c;
+      --text: #eef2f4;
+      --dim: #9fb0ba;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0f14; }
+    body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: var(--text); }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+    #ui { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      backdrop-filter: blur(6px);
+    }
+    /* pravý dolní panel */
+    #stats {
+      position: absolute; right: 18px; bottom: 18px;
+      display: grid; grid-template-columns: auto auto; gap: 6px 14px;
+      padding: 12px 16px; font-size: 14px; min-width: 210px;
+    }
+    #stats .row { display: contents; }
+    #stats .label { color: var(--dim); display: flex; align-items: center; gap: 6px; }
+    #stats .value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    #stats svg { width: 15px; height: 15px; stroke: var(--accent); fill: none; stroke-width: 1.8; }
+    #nr.warn { color: #ff5544; }
+    /* horní proužek — cíl */
+    #target {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px; padding: 8px 18px; font-size: 14px;
+    }
+    #targetArrow { width: 22px; height: 22px; transition: transform 0.1s linear; }
+    #targetArrow path { fill: var(--accent); }
+    /* radiogramy vlevo nahoře */
+    #radio { position: absolute; top: 16px; left: 18px; max-width: 340px; display: flex; flex-direction: column; gap: 8px; }
+    .radio-msg { padding: 8px 12px; font-size: 13px; line-height: 1.35; border-left: 3px solid var(--accent); opacity: 0.95; }
+    .radio-msg .who { color: var(--accent); font-weight: 700; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+    /* výzva dole uprostřed */
+    #prompt {
+      position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; font-size: 15px; font-weight: 600; display: none;
+      border-color: var(--accent);
+    }
+    #prompt kbd, .kbd {
+      background: rgba(255,255,255,0.12); border-radius: 6px; padding: 1px 7px;
+      border: 1px solid rgba(255,255,255,0.25); font-family: inherit;
+    }
+    /* středový zaměřovač myši */
+    #reticle {
+      position: absolute; left: 50%; top: 50%; width: 26px; height: 26px;
+      transform: translate(-50%, -50%); opacity: 0.9;
+    }
+    #reticle::before, #reticle::after {
+      content: ""; position: absolute; background: rgba(255, 255, 255, 0.85);
+    }
+    #reticle::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+    #reticle::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+    #stickDot {
+      position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent); transform: translate(-50%, -50%); opacity: 0.9;
+    }
+    #stickRing {
+      position: absolute; left: 50%; top: 50%; border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 50%; transform: translate(-50%, -50%);
+    }
+    /* varování uprostřed */
+    #warnings {
+      position: absolute; top: 76px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 6px; align-items: center;
+    }
+    .warn {
+      padding: 6px 16px; border-radius: 10px; font-size: 13px; font-weight: 700;
+      background: rgba(120, 20, 10, 0.75); border: 1px solid rgba(255, 80, 60, 0.6);
+      animation: blink 0.8s infinite alternate;
+    }
+    @keyframes blink { from { opacity: 0.75; } to { opacity: 1; } }
+    /* překryvy */
+    .overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(5, 8, 12, 0.62); pointer-events: auto;
+    }
+    .overlay.hidden { display: none; }
+    .card { max-width: 640px; width: min(92vw, 640px); padding: 26px 30px; max-height: 86vh; overflow: auto; }
+    .card h1 { font-size: 30px; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .card h1 span { color: var(--accent); }
+    .card h2 { font-size: 18px; margin-bottom: 10px; color: var(--accent); }
+    .card p { font-size: 14px; line-height: 1.5; color: var(--text); margin-bottom: 8px; }
+    .card .dim { color: var(--dim); font-size: 13px; }
+    .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; font-size: 13px; margin: 10px 0 14px; }
+    .controls-grid .k { color: var(--dim); }
+    button {
+      pointer-events: auto; cursor: pointer; border: none; border-radius: 12px;
+      background: var(--accent); color: #1a1206; font-weight: 800; font-size: 16px;
+      padding: 12px 26px; margin-top: 8px;
+    }
+    button:hover { filter: brightness(1.1); }
+    button.secondary { background: rgba(255,255,255,0.14); color: var(--text); font-weight: 600; }
+    .settings { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 12px 0; font-size: 13px; }
+    .settings label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+    .settings input[type="range"] { width: 110px; accent-color: var(--accent); }
+    select {
+      pointer-events: auto; background: rgba(255,255,255,0.1); color: var(--text);
+      border: 1px solid var(--panel-border); border-radius: 8px; padding: 5px 10px; font-size: 13px;
+    }
+    select option { background: #16202a; color: var(--text); }
+    #report .crosses { font-size: 26px; color: var(--accent); letter-spacing: 0.2em; }
+    #report ul { margin: 8px 0 8px 18px; font-size: 14px; line-height: 1.55; }
+    #telemetry {
+      position: absolute; left: 18px; bottom: 18px; padding: 10px 14px; font-size: 12px;
+      font-family: ui-monospace, Menlo, monospace; white-space: pre; display: none; color: #bfe3ff;
+    }
+    #help { position: absolute; top: 60px; right: 18px; padding: 14px 18px; font-size: 13px; line-height: 1.7; display: none; max-width: 380px; }
+    #help .kbd { font-size: 11px; }
+    #msg {
+      position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+      font-size: 22px; font-weight: 700; color: #ffd27a; text-shadow: 0 2px 12px #000; display: none; text-align: center;
+    }
+    #topbar-left { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 18px; }
+    #clock { font-size: 13px; color: var(--dim); align-self: center; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
