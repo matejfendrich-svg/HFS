@@ -41,7 +41,7 @@ export class Hud {
         <div class="row"><span class="label">${ICONS.altitude} držení výšky</span><span class="value" id="althold" style="color:#666;">—</span></div>
         <div style="grid-column: 1 / span 2; color: var(--dim); font-size: 11px; margin-top: 4px;">lano: <span class="kbd">R</span>/<span class="kbd">V</span> nebo <span class="kbd">Shift</span>+kolečko · hák: <span class="kbd">mezerník</span> · hook cam: <span class="kbd">H</span> · nastavení: <span class="kbd">O</span> · režim: <span class="kbd">P</span></div>
       </div>
-      <div id="hookInfo" class="panel" style="position:absolute; right:18px; bottom:170px; padding:8px 14px; font-size:13px; display:none;"></div>
+      <div id="hookInfo" class="panel" style="position:absolute; right:18px; top:215px; padding:8px 14px; font-size:13px; display:none;"></div>
       <div id="topbar-left">
         <div id="target" class="panel">
           <svg id="targetArrow" viewBox="0 0 24 24"><path d="M12 2l6 18-6-4-6 4z"/></svg>
@@ -115,14 +115,21 @@ export class Hud {
             </label>
             <label><input type="checkbox" id="setStorm" /> Bouřka (poryvy, liják, blesky)</label>
             <label><input type="checkbox" id="setTest" /> Test režim (telemetrie F3, výpadek motoru T)</label>
-            <label style="justify-content: space-between;">Režim letu
+            <label style="justify-content: space-between;">Režim letu (17.6: jen dva)
               <select id="setMode">
-                <option value="stabilized">Stabilizovaný (tlumený)</option>
-                <option value="hover">Hover (držení pozice)</option>
-                <option value="autopilot">Autopilot (let na cíl)</option>
+                <option value="stabilized">Stabilizovaný</option>
                 <option value="manual">Manual (plný realismus)</option>
               </select>
             </label>
+            <label style="justify-content: space-between;">Kvalita grafiky
+              <select id="setQuality">
+                <option value="low">Nízká (bez stínů)</option>
+                <option value="medium">Střední</option>
+                <option value="high">Vysoká</option>
+              </select>
+            </label>
+            <label style="justify-content: space-between;">Počet stromů: <span id="treeCountLabel">9000</span>
+              <input type="range" id="setTrees" min="2000" max="12000" step="500" /></label>
             <label style="justify-content: space-between;">Vyhlazení joysticku (τ)
               <input type="range" id="setSmooth" min="0.02" max="0.3" step="0.01" /></label>
             <label style="justify-content: space-between;">FOV kamery
@@ -140,7 +147,7 @@ export class Hud {
       'startOverlay', 'reportOverlay', 'report', 'pauseOverlay', 'startBtn', 'resumeBtn', 'saveInfo',
       'setInvertY', 'setExpo', 'setSens', 'modeBadge',
       'settingsOverlay', 'setTime', 'setWind', 'setStorm', 'setTest', 'setMode', 'closeSettingsBtn', 'openSettingsBtn',
-      'setSmooth', 'setFov', 'setZoom'];
+      'setSmooth', 'setFov', 'setZoom', 'setQuality', 'setTrees', 'treeCountLabel'];
     this.el = {};
     for (const id of ids) this.el[id] = ui.querySelector('#' + id) as HTMLElement;
     this.buildHelp();
@@ -303,7 +310,7 @@ export class Hud {
   }
 
   // Panel nastavení (klávesa O): „témata“ — čas dne, vítr, bouřka, test, režim letu.
-  bindSettingsPanel(settings: ControlSettings, onChange: () => void): void {
+  bindSettingsPanel(settings: ControlSettings, onChange: () => void, onLight: () => void = onChange): void {
     const time = this.el.setTime as HTMLSelectElement;
     const wind = this.el.setWind as HTMLSelectElement;
     const storm = this.el.setStorm as HTMLInputElement;
@@ -312,6 +319,9 @@ export class Hud {
     const smooth = this.el.setSmooth as HTMLInputElement;
     const fov = this.el.setFov as HTMLInputElement;
     const zoom = this.el.setZoom as HTMLInputElement;
+    const quality = this.el.setQuality as HTMLSelectElement;
+    const trees = this.el.setTrees as HTMLInputElement;
+    const treeLabel = this.el.treeCountLabel;
     const sync = () => {
       settings.timeOfDay = time.value as ControlSettings['timeOfDay'];
       settings.windLevel = parseInt(wind.value, 10);
@@ -321,6 +331,9 @@ export class Hud {
       settings.stickSmoothing = parseFloat(smooth.value);
       settings.fov = parseFloat(fov.value);
       settings.zoom = parseFloat(zoom.value);
+      settings.graphicsQuality = quality.value as ControlSettings['graphicsQuality'];
+      settings.treeCount = parseInt(trees.value, 10);
+      treeLabel.textContent = String(settings.treeCount);
       onChange();
     };
     const reflect = () => {
@@ -332,9 +345,19 @@ export class Hud {
       smooth.value = String(settings.stickSmoothing);
       fov.value = String(settings.fov);
       zoom.value = String(settings.zoom);
+      quality.value = settings.graphicsQuality;
+      trees.value = String(settings.treeCount);
+      treeLabel.textContent = String(settings.treeCount);
     };
-    for (const el of [time, wind, storm, test, mode, smooth, fov, zoom]) el.addEventListener('change', sync);
-    for (const el of [smooth, fov, zoom]) el.addEventListener('input', sync);
+    // změna kvality/počtu stromů = těžká (přestaví se scéna) → jen 'change'; posuvníky jen ukládají
+    for (const el of [time, wind, storm, test, mode, quality, trees]) el.addEventListener('change', sync);
+    for (const el of [smooth, fov, zoom]) el.addEventListener('input', () => {
+      settings.stickSmoothing = parseFloat(smooth.value);
+      settings.fov = parseFloat(fov.value);
+      settings.zoom = parseFloat(zoom.value);
+      onLight();
+    });
+    trees.addEventListener('input', () => { treeLabel.textContent = trees.value; });
     this.el.closeSettingsBtn.addEventListener('click', () => this.showSettings(false));
     this.el.openSettingsBtn.addEventListener('click', () => { this.showPause(false); this.showSettings(true); });
     reflect();

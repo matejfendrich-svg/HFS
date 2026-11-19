@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import {
   WORLD, PHYSICS, CONTROLS, CAMERA, TIME, WEATHER, RENDER, HELI_TYPES, HELI_TYPE_INDEX, ROPE,
-  GAMEPLAY, FLIGHT_MODES, TIME_OF_DAY,
+  FLIGHT_MODES, TIME_OF_DAY, GRAPHICS,
 } from './config';
 import { clamp, lerp, wrapAngle, DEG } from './utils/math';
 import { World } from './world/terrain';
@@ -26,8 +26,6 @@ type GameState = 'menu' | 'playing' | 'paused';
 const MODE_LABELS: Record<string, string> = {
   manual: 'MANUAL (plný realismus)',
   stabilized: 'STABILIZOVANÝ',
-  hover: 'HOVER',
-  autopilot: 'AUTOPILOT',
 };
 
 class Game {
@@ -69,6 +67,8 @@ class Game {
   private lightningTimer = 0;
   private nightFrac = 0;
   private stormActive = false;
+  private windFactor = 0;
+  private fogFarMul = 1;
   private lastMode = '';
   // interpolace: stav před posledním fyzikálním krokem
   private prev = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, omega: 0 };
@@ -88,7 +88,7 @@ class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.3; // 17.4: hra musí být vidět
     app.appendChild(this.renderer.domElement);
 
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, RENDER.skyRadius * 2);
@@ -217,6 +217,7 @@ class Game {
       treesNear: (x, z, r) => this.world.treesNear(x, z, r),
       time: 0,
       mode: 'stabilized',
+      turbulenceScale: 1,
       attachForce: new THREE.Vector3(),
       loadMass: 0,
     };
@@ -224,6 +225,7 @@ class Game {
     this.controls = new Controls(this.renderer.domElement);
     this.controls.loadSettings();
     this.camRig = new CameraRig(this.controls.settings.fov, this.controls.settings.zoom);
+    this.applyGraphics(); // kvalita + počet stromů z uložených nastavení
     this.camRig.hookCam = this.controls.settings.hookCam;
     // prach od rotorového proudění při přiblížení k zemi (17.7, minimální varianta)
     const dustGeo = new THREE.BufferGeometry();
@@ -237,7 +239,7 @@ class Game {
     this.scene.add(this.dust);
     this.hud = new Hud(document.getElementById('ui')!);
     this.hud.bindStart(this.controls.settings, this.mission.money, this.mission.shift, () => this.startGame());
-    this.hud.bindSettingsPanel(this.controls.settings, () => this.controls.saveSettings());
+    this.hud.bindSettingsPanel(this.controls.settings, () => { this.controls.saveSettings(); this.applyGraphics(); }, () => this.controls.saveSettings());
 
     // déšť pro bouřku (skrytý dokud není zapnutá)
     const rainGeo = new THREE.BufferGeometry();
@@ -291,46 +293,6 @@ class Game {
     this.hud.message('Studený start: klávesa E — startér → zážeh → náběh rotoru', 5000);
   }
 
-  // Autopilot: letí na aktuální cíl mise (kmen při prázdném háku, odkládací plocha
-  // s nákladem), u cíle přejde do hoveru. Jednoduchý P-regulátor přes cílové náklony.
-  private applyAutopilot(input: ReturnType<Controls['output']>): void {
-    const ap = GAMEPLAY.autopilot;
-    let target: THREE.Vector3 | null = null;
-    if (this.rope.attached) {
-      target = this.world.dropCenter.clone().add(new THREE.Vector3(0, ap.cruiseAlt, 0));
-    } else {
-      const log = this.logField.nearestPending(this.heli.pos);
-      if (log) target = log.pos.clone().add(new THREE.Vector3(0, ap.cruiseAlt, 0));
-    }
-    if (!target) return;
-    const to = this.tmpV.set(target.x - this.heli.pos.x, 0, target.z - this.heli.pos.z);
-    const dist = to.length();
-    const fwd = this.tmpV2.set(0, 0, -1).applyQuaternion(this.heli.quaternion());
-    const right = this.tmpV3.set(1, 0, 0).applyQuaternion(this.heli.quaternion());
-    // cílová vodorovná rychlost směrem k cíli
-    const speed = Math.min(dist * ap.kPos, ap.maxSpeed);
-    const desVx = dist > 0.5 ? (to.x / dist) * speed : 0;
-    const desVz = dist > 0.5 ? (to.z / dist) * speed : 0;
-    // chyba rychlosti → cílové zrychlení → náklon (a ≈ g·tilt)
-    const aDesX = (desVx - this.heli.vel.x) * ap.kVel;
-    const aDesZ = (desVz - this.heli.vel.z) * ap.kVel;
-    const aF = aDesX * fwd.x + aDesZ * fwd.z;
-    const aR = aDesX * right.x + aDesZ * right.z;
-    const maxTilt = ap.maxTiltDeg * DEG;
-    input.targetPitch = clamp(-aF / PHYSICS.gravity, -maxTilt, maxTilt);
-    input.targetRoll = clamp(aR / PHYSICS.gravity, -maxTilt, maxTilt);
-    // pedály: natočit příď k cíli
-    const bearing = Math.atan2(-to.x, -to.z);
-    input.pedal = clamp(wrapAngle(bearing - this.heli.yaw) * ap.yawGain * 10, -1, 1);
-    // kolektiv: výška nad cílem
-    input.collectiveRate = clamp((target.y - this.heli.pos.y) * ap.altGain - this.heli.vel.y * 0.12, -1, 1) * 0.6;
-    if (dist < ap.arriveRadius && Math.abs(this.heli.pos.y - target.y) < 3) {
-      // u cíle: zpomalit a držet (hover efekt přes útlum rychlosti v režimu)
-      input.targetPitch = 0;
-      input.targetRoll = 0;
-    }
-  }
-
   private setPaused(p: boolean): void {
     if (this.state === 'playing' && p) {
       this.state = 'paused';
@@ -340,6 +302,22 @@ class Game {
       this.hud.showPause(false);
       this.lastTime = performance.now();
     }
+  }
+
+  // aplikace grafických nastavení (17.5): kvalita + počet stromů
+  private applyGraphics(rebuildTrees = true): void {
+    const s = this.controls.settings;
+    const preset = GRAPHICS.presets[s.graphicsQuality];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, preset.pixelRatio));
+    this.renderer.shadowMap.enabled = preset.shadows;
+    this.sun.castShadow = preset.shadows;
+    if (preset.shadows) {
+      this.sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
+      const old = this.sun.shadow.map;
+      if (old) { old.dispose(); (this.sun.shadow as unknown as { map: unknown }).map = null; }
+    }
+    this.fogFarMul = preset.fogFarMul;
+    if (rebuildTrees) this.world.buildTrees(this.scene, s.treeCount);
   }
 
   private onResize(): void {
@@ -440,6 +418,10 @@ class Game {
     if (storm && Math.random() < WEATHER.storm.lightningChancePerS * frameDt) this.lightningTimer = 0.14;
     this.flightEnv.time = now / 1000;
     this.flightEnv.mode = s.mode;
+    // 17.3: bez větru se vůbec neklepe; ve větru lehce, v bouřce víc
+    const windFactor = s.windLevel > 0 ? (storm ? WEATHER.storm.turbulenceMultiplier : 1) : 0;
+    this.windFactor = windFactor;
+    this.flightEnv.turbulenceScale = windFactor;
     this.stormActive = storm;
     if (s.testMode) this.showTelemetry = true;
     if (s.mode !== this.lastMode) {
@@ -447,13 +429,7 @@ class Game {
       this.hud.setModeBadge(this.modeBadgeText());
     }
 
-    // --- autopilot: generuje vstupy místo hráče (let na cíl mise, pak hover) ---
-    if (s.mode === 'autopilot') this.applyAutopilot(input);
-    else if (s.mode === 'hover') {
-      // hover: nulové cílové náklony; výšku drží vestavěný alt-hold (6.3b)
-      input.targetPitch = 0;
-      input.targetRoll = 0;
-    }
+    // (režimy jen manual/stabilized — 17.6; alt-hold běží vždy, 6.3b)
 
     // --- akce hráče ---
     if (input.hookPressed) this.mission.hookPress(this.heli, this.rope, this.logField);
@@ -550,8 +526,8 @@ class Game {
     const dayBot = new THREE.Color(0xc7d6e0);
     const duskTop = new THREE.Color(0x3a3a6e);
     const duskBot = new THREE.Color(0xff9a55);
-    const nightTop = new THREE.Color(0x060a14);
-    const nightBot = new THREE.Color(0x101a2a);
+    const nightTop = new THREE.Color(0x0b1424);
+    const nightBot = new THREE.Color(0x1a2a3e); // 17.4: světlejší noc
     const duskFrac = clamp(1 - Math.abs(elev) / (18 * DEG), 0, 1); // soumrak kolem 0°
     const top = new THREE.Color().copy(nightTop).lerp(dayTop, dayFrac).lerp(duskTop, duskFrac * (1 - dayFrac) * 0.8);
     const bot = new THREE.Color().copy(nightBot).lerp(dayBot, dayFrac).lerp(duskBot, duskFrac * (1 - dayFrac) * 0.8);
@@ -559,8 +535,8 @@ class Game {
     this.skyMat.uniforms.bottomColor.value.copy(bot);
     this.skyMat.uniforms.sunColor.value.setHex(elev > 0 ? 0xffe0b0 : 0x8899bb);
     this.sun.color.setHex(elev > 0 ? 0xfff2dd : 0x8fa3cc);
-    this.sun.intensity = elev > 0 ? 0.25 + 2.3 * dayFrac : 0.35;
-    this.hemi.intensity = 0.12 + 0.65 * dayFrac;
+    this.sun.intensity = elev > 0 ? 0.55 + 2.4 * dayFrac : 0.6; // 17.4: světlejší i v noci
+    this.hemi.intensity = 0.38 + 0.62 * dayFrac; // 17.4: vyšší základní světlo
     this.hemi.color.setHex(elev > 0 ? 0xbfd4e6 : 0x2a3550);
     // stín follows heli
     const hp = this.heli.pos;
@@ -572,7 +548,7 @@ class Game {
     fog.color.copy(bot).lerp(new THREE.Color(0xffffff), dayFrac * 0.25);
     if (this.stormActive) fog.color.lerp(new THREE.Color(0x2a3038), WEATHER.storm.fogDarken);
     fog.near = RENDER.fogNear * (1 - dayFrac * 0.3);
-    fog.far = RENDER.fogFar * (1 - dayFrac * 0.35) * (this.stormActive ? 0.55 : 1);
+    fog.far = RENDER.fogFar * this.fogFarMul * (1 - dayFrac * 0.35) * (this.stormActive ? 0.55 : 1);
     (this.stars.material as THREE.PointsMaterial).opacity = (1 - dayFrac) * 0.9 * (this.stormActive ? 0.2 : 1);
     this.nightFrac = 1 - dayFrac;
     // blesk: krátký záblesk světla
@@ -792,8 +768,9 @@ class Game {
     const freeLook = this.controls.freeLookHeld();
     if (freeLook) this.camRig.freeLook(this.controls.consumeFreeDelta());
     else this.controls.consumeFreeDelta();
-    this.camRig.update(1 / 60, p, q, freeLook, this.world, this.camera);
-    this.camRig.applyMicroShake(this.camera, this.heli.telemetry.omegaFrac);
+    this.camRig.update(1 / 60, p, q, freeLook, this.world, this.camera, this.heli.telemetry.horizSpeed);
+    // kamerové mikro-otřesy jen ve větru (17.3), max 0,2°
+    this.camRig.applyMicroShake(this.camera, this.heli.telemetry.omegaFrac * this.windFactor);
 
     // hlavní render (nebo celá obrazovka hook cam)
     if (this.camRig.hookCam === 'full') {
@@ -803,12 +780,12 @@ class Game {
       this.renderer.render(this.scene, this.camRig.hookCamera);
     } else {
       this.renderer.render(this.scene, this.camera);
-      // hook cam jako obraz v obrazu v pravém dolním rohu (6.5d)
+      // hook cam jako obraz v obrazu v PRAVÉM HORNÍM rohu (17.2) — pohled z kamery na helikoptéře dolů na lano
       if (this.camRig.hookCam === 'pip') {
-        const w = Math.floor(window.innerWidth * 0.32);
+        const w = Math.floor(window.innerWidth * CAMERA.hookCamPipFrac);
         const h = Math.floor(w * 9 / 16);
         const x = window.innerWidth - w - 16;
-        const y = window.innerHeight - h - 16;
+        const y = window.innerHeight - h - 16; // WebGL viewport počítá odspoda
         this.camRig.updateHookCam(p, q, this.rope.hookPos, s.fov);
         this.camRig.hookCamera.aspect = w / h;
         this.camRig.hookCamera.updateProjectionMatrix();

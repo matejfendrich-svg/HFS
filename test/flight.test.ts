@@ -16,6 +16,7 @@ function flatEnv(groundY = 0, mode: FlightEnv['mode'] = 'manual'): FlightEnv {
     treesNear: () => [],
     time: 0,
     mode,
+    turbulenceScale: 1,
     attachForce: new THREE.Vector3(0, 0, 0),
     loadMass: 0,
   };
@@ -197,16 +198,31 @@ describe('letový model', () => {
     expect(Math.abs(m.roll)).toBeLessThan(3 * Math.PI / 180);
   });
 
-  it('hover režim: bez vstupu tlumí vodorovnou rychlost (držení pozice)', () => {
+  it('stabilizovaný režim: bez vstupu tlumí vodorovnou rychlost („přibitý“ let)', () => {
     const m = new FlightModel(type);
     m.reset(0, 300, 0);
-    const env = flatEnv(-1e6, 'hover');
+    const env = flatEnv(-1e6, 'stabilized');
     m.omega = m.omegaNom;
     m.engine = 'running';
     m.collective = 0.5;
     m.vel.set(10, 0, 0);
     stepN(m, env, Math.ceil(8 / H), input());
     expect(Math.hypot(m.vel.x, m.vel.z)).toBeLessThan(3);
+  });
+
+  it('17.3: bez větru (turbulenceScale=0) je klid absolutní — žádný drift', () => {
+    const m = new FlightModel(type);
+    m.reset(0, 300, 0);
+    const env = flatEnv(-1e6, 'manual');
+    env.turbulenceScale = 0;
+    m.omega = m.omegaNom;
+    m.engine = 'running';
+    m.collective = 0.5;
+    const v0 = m.vel.clone();
+    stepN(m, env, Math.ceil(5 / H), input());
+    // bez větru a bez vstupu se rychlost mění jen odporem — žádné náhodné cukání
+    expect(Math.abs(m.vel.x - v0.x)).toBeLessThan(0.5);
+    expect(Math.abs(m.vel.z - v0.z)).toBeLessThan(0.5);
   });
 
   it('setrvačnost: bez vstupu vrtulník drží rychlost (žádné auto-brzdění)', () => {

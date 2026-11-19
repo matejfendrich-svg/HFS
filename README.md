@@ -52,22 +52,22 @@ náklon), klávesy jsou kolektiv a pedály.
 | --- | --- |
 | myš | cyklika — čím dál od středu, tím větší náklon; poloha páky je **filtrovaná** (dolnopropust τ ~0,1 s + mrtvá zóna 5 % + limit změny), ukazatel páky je kolem středu obrazovky |
 | `W` / `S` (nebo kolečko myši) | **příkaz vertikální rychlosti** (plynulý náběh, +5/−8 m/s); po puštění **držení výšky** (indikátor v HUD) — měkký kolektiv, žádné skoky |
-| `A` / `D` (alt. `Q` / `E`) | pedály (zatáčení) |
+| `A` / `D` (alt. `Q` / `E`) | pedály — zatáčení (yaw), jako levá páka na FPV ovladači; myš řídí jen pitch+roll (pravá páka) |
 | `R` / `V` (nebo `Shift`+kolečko) | naviják — vysunout / zatáhnout lano (3–40 m, 2 m/s) |
 | `mezerník` | zajistit / uvolnit hák u kmene |
 | `E` | studený start motoru (startér → zážeh → náběh) / vypnutí |
 | `T` | testovací výpadek motoru (autorotace) |
 | `C` | trim — aktuální výchylka myši se stane nulou |
 | `X` | přepnout kameru (chase / kokpit / shora / z boku) |
-| `H` | **pohled na naviják** (hook cam): hlavní → obraz v obrazu → celá obrazovka, s údajem vzdálenosti hák–cíl |
+| `H` | hook cam: obraz z kamery na vrtulníku dolů na lano je **trvale v pravém horním rohu** (obraz v obrazu); H přepíná na celou obrazovku / vypne, HUD ukazuje vzdálenost hák–cíl |
 | `+` / `−` (nebo kolečko při rozhledu) | zoom kamery |
 | pravé tlačítko myši (držet) | volný rozhled současně s řízením (páka drží poslední polohu) |
-| `O` | **panel nastavení**: čas dne, vítr, bouřka, test režim, režim letu, vyhlazení páky, FOV, zoom |
-| `P` | cyklovat přídavný režim letu: Stabilizovaný / Hover / Autopilot / Manual (základní řídicí vrstva je vždy stejná) |
+| `O` | **panel nastavení**: čas dne, vítr, bouřka, test režim, režim letu, vyhlazení páky, FOV, zoom + **grafika**: kvalita (nízká/střední/vysoká) a počet generovaných stromů (2 000–12 000) |
+| `P` | přepnout mezi **dvěma režimy**: Stabilizovaný / Manual (autopilot odstraněn) |
 | `F1` / `F3` / `F5` | nápověda / telemetrie / rychlé uložení |
 | `M` | ztlumit zvuk · `Esc` pauza · `Enter` další směna po zprávě |
 
-Trup se nikdy nerozklepe — jediné chvění je kamerové (< 0,2°, podle otáček rotoru).
+Trup se **bez větru vůbec nerozklepe**; lehké kamerové chvění (< 0,2°) až ve větru/bouřce. Kamera se při vyšší rychlosti sama srovná do normálního pohledu ze 3. osoby. Světlo je nastaveno světleji (vidět i za soumraku/v noci).
 
 Kliknutím na herní plochu se zamkne kurzor (pointer lock); `Esc` ho uvolní.
 

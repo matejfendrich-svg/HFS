@@ -31,6 +31,7 @@ export interface FlightEnv {
   treesNear: (x: number, z: number, r: number) => TreeInstance[];
   time: number;             // herní čas [s] (turbulence)
   mode: FlightMode;         // letový režim (jen tlumení; řídicí vrstva je vždy stejná, 5.4)
+  turbulenceScale: number;  // 0 = bez větru (vůbec se neklepe), 1 = normál, >1 bouřka (17.3)
   attachForce: THREE.Vector3; // síla lana na závěsný bod (world) — nastaví ropeSim
   loadMass: number;         // hmotnost nákladu [kg] (0 = bez nákladu)
 }
@@ -329,12 +330,8 @@ export class FlightModel {
     // stabilizované režimy (DJI-like / arkádově „zbržděné“): lineární útlum rychlosti
     // vodorovně i svisle — stroj se po puštění páky rychle zastaví, ale reálné rychlosti
     // zůstávají zachované (jen tlumení, žádné omezení maxima)
-    const horizDamp = env.mode === 'hover' ? GAMEPLAY.hover.horizDamp
-      : env.mode === 'stabilized' ? GAMEPLAY.stabilized.horizDamp
-      : env.mode === 'autopilot' ? 0.4 : 0;
-    const vertDamp = env.mode === 'hover' ? GAMEPLAY.hover.vertDamp
-      : env.mode === 'stabilized' ? GAMEPLAY.stabilized.vertDamp
-      : env.mode === 'autopilot' ? 0.3 : 0;
+    const horizDamp = env.mode === 'stabilized' ? GAMEPLAY.stabilized.horizDamp : 0;
+    const vertDamp = env.mode === 'stabilized' ? GAMEPLAY.stabilized.vertDamp : 0;
     if (horizDamp > 0) {
       F.x -= this.vel.x * m * horizDamp;
       F.z -= this.vel.z * m * horizDamp;
@@ -347,6 +344,16 @@ export class FlightModel {
     const tailForce = this.pedal * 15000;
     F.addScaledVector(right, tailForce);
     F.add(this.attachForce); // lano na závěsném bodě (7.6)
+    // turbulence (5.4 revidováno + 17.3): jen nízkofrekvenční drift, jen ve větru —
+    // bez větru (turbulenceScale = 0) se vrtulník vůbec neklepe
+    const ti = P.turbulence_intensity * env.turbulenceScale;
+    if (ti > 0) {
+      const w = 2 * Math.PI * P.turbulence_freq;
+      const tSec = env.time;
+      const aAmp = ti * P.turbulence_maxDeltaV * w;
+      F.x += m * aAmp * Math.cos(w * tSec);
+      F.z += m * aAmp * Math.sin(w * tSec * 0.83 + 1.7);
+    }
     this.vel.addScaledVector(F, dt / m);
     this.pos.addScaledVector(this.vel, dt);
 
@@ -360,8 +367,8 @@ export class FlightModel {
     // POZNÁMKA (6.7c): žádný auto-level — po puštění myši drží vrtulník ustálený náklon.
     // Režimy mění jen tlumení (stabilizovaný = „přibitější“, jak požadoval zadavatel).
     // vyšší tlumení náklonu ve stabilizovaných režimech (méně „klepání“, rychlejší odezva)
-    const kD = A.kD * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kDMultiplier : GAMEPLAY.stabilized.kDMultiplier));
-    const kP = A.kP * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kPMultiplier : GAMEPLAY.stabilized.kPMultiplier));
+    const kD = A.kD * (env.mode === 'manual' ? 1 : GAMEPLAY.stabilized.kDMultiplier);
+    const kP = A.kP * (env.mode === 'manual' ? 1 : GAMEPLAY.stabilized.kPMultiplier);
     // vnější moment od lana na závěsném bodě (7.6) — kyvadlový efekt nákladu
     const rAttach = new THREE.Vector3(0, t.attachOffsetY, 0).applyQuaternion(this.quaternion());
     const M = new THREE.Vector3().crossVectors(rAttach, this.attachForce);

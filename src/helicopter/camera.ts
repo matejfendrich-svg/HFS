@@ -68,14 +68,17 @@ export class CameraRig {
     freeLookHeld: boolean,
     world: World,
     camera: THREE.PerspectiveCamera,
+    horizSpeed = 0,
   ): void {
     const q = heliQuat;
     const fwd = this.tmpV.set(0, 0, -1).applyQuaternion(q);
     const up = this.tmpV2.set(0, 1, 0).applyQuaternion(q);
-    if (!freeLookHeld && this.view === 'chase') {
-      // měkký návrat za vrtulník po puštění rozhledu
-      this.freeYaw = lerp(this.freeYaw, 0, 1 - Math.exp(-dt / 0.5));
-      this.freePitch = lerp(this.freePitch, 0, 1 - Math.exp(-dt / 0.5));
+    // 17.1: při vyšší rychlosti se kamera vždy sama srovná do normálního pohledu ze 3. osoby
+    const realign = horizSpeed > CAMERA.realignSpeed;
+    if ((!freeLookHeld || realign) && this.view === 'chase') {
+      const tau = realign ? 0.12 : 0.5; // při rychlosti rychle, jinak měkce
+      this.freeYaw = lerp(this.freeYaw, 0, 1 - Math.exp(-dt / tau));
+      this.freePitch = lerp(this.freePitch, 0, 1 - Math.exp(-dt / tau));
     }
     const zoom = clamp(this.zoom, CAMERA.zoomMin, CAMERA.zoomMax);
     if (this.view === 'cockpit') {
@@ -130,9 +133,11 @@ export class CameraRig {
     this.shakeT += dt;
   }
 
-  // kamerové mikro-otřesy — volá se z main s omegaFrac (amplituda < 0,2°)
-  applyMicroShake(camera: THREE.PerspectiveCamera, omegaFrac: number): void {
-    const amp = (CAMERA.microShakeMaxDeg * Math.PI / 180) * clamp(omegaFrac, 0, 1);
+  // kamerové mikro-otřesy — volá se z main; bez větru amp = 0 (vůbec se neklepe, 17.3),
+  // ve větru lehce, max 0,2° (5.4)
+  applyMicroShake(camera: THREE.PerspectiveCamera, ampDeg: number): void {
+    if (ampDeg <= 0) return;
+    const amp = (Math.min(ampDeg, CAMERA.microShakeMaxDeg) * Math.PI) / 180;
     const t = this.shakeT;
     camera.rotateX(Math.sin(t * 31.7) * 0.5 * amp + Math.sin(t * 47.3) * 0.5 * amp * 0.3);
     camera.rotateY(Math.sin(t * 27.1) * 0.5 * amp);

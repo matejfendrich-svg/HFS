@@ -141,7 +141,12 @@ export class World {
   }
 
   // --- stromy ---------------------------------------------------------------
-  buildTrees(scene: THREE.Scene): void {
+  // count = počet stromů z nastavení grafiky; při změně se staré instanced meshe odstraní
+  buildTrees(scene: THREE.Scene, count: number = WORLD.treeCount): void {
+    for (const m of this.treeMeshes) scene.remove(m);
+    this.treeMeshes = [];
+    this.trees = [];
+    this.grid.clear();
     const rng = mulberry32(WORLD.seed ^ 0x9e3779b9);
     const clearings = WORLD.treeClearings;
     // rozmísťovací grid — rychlá kontrola min. rozestupu (bez O(n²))
@@ -158,7 +163,7 @@ export class World {
       return false;
     };
     let attempts = 0;
-    while (this.trees.length < WORLD.treeCount && attempts < WORLD.treeCount * 30) {
+    while (this.trees.length < count && attempts < count * 30) {
       attempts++;
       const x = (rng() - 0.5) * WORLD.size * 0.98;
       const z = (rng() - 0.5) * WORLD.size * 0.98;

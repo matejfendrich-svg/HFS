@@ -271,9 +271,11 @@ export const CAMERA = {
   fovDefault: 62,
   fovMin: 40,
   fovMax: 90,
-  microShakeMaxDeg: 0.2,        // jediné povolené chvění — kamerové, < 0,2° (5.4)
+  microShakeMaxDeg: 0.2,        // jediné povolené chvění — kamerové, < 0,2°; jen ve větru (17.3)
+  realignSpeed: 10,             // m/s — při vyšší rychlosti se kamera sama srovná za stroj (17.1)
   views: ['chase', 'cockpit', 'high', 'side'],
-  hookCamModes: ['off', 'pip', 'full'] as const, // H cykluje (6.5d)
+  hookCamModes: ['pip', 'full', 'off'] as const, // H cykluje; PiP v pravém horním rohu (17.2)
+  hookCamPipFrac: 0.26,         // šířka obrazu v obrazu jako zlomek šířky okna
 };
 export type HookCamMode = (typeof CAMERA.hookCamModes)[number];
 
@@ -308,36 +310,33 @@ export const TIME_OF_DAY = {
 } as const;
 export type TimeOfDayPreset = (typeof TIME_OF_DAY.presets)[number];
 
-// Letové režimy (nastavení): manual = plný realismus, stabilized = „DJI“ (tlumení,
-// auto-level při neutrální páce), hover = držení pozice/výšky, autopilot = let na cíl.
-export const FLIGHT_MODES = ['manual', 'stabilized', 'hover', 'autopilot'] as const;
+// Letové režimy (požadavek zadavatele): POUZE dva — manual (plný realismus)
+// a stabilized („přibitější“, tlumení). Autopilot/hover odstraněny.
+export const FLIGHT_MODES = ['manual', 'stabilized'] as const;
 export type FlightMode = (typeof FLIGHT_MODES)[number];
 
 export const GAMEPLAY = {
   modeDefault: 'stabilized' as FlightMode,
-  // stabilizovaný režim („arkádově zbržděný“, jako Construction Simulator, ale reálné
-  // rychlosti): vyšší tlumení náklonu, auto-level, silný lineární útlum rychlosti
-  // (vodorovně i svisle) — stroj se po puštění páky rychle „zastaví“, ale letí reálně
   // POZNÁMKA: žádný auto-level — po puštění myši drží vrtulník ustálený náklon (6.7c).
-  // Režimy mění jen tlumení (stabilizovaný = „přibitější“, jak požadoval zadavatel).
   stabilized: { kPMultiplier: 1.4, kDMultiplier: 2.4, horizDamp: 1.2, vertDamp: 0.5, vibScale: 0.35 },
-  // hover: držení pozice — silné tlumení rychlosti (výšku drží globální alt-hold)
-  hover: { kPMultiplier: 1.6, kDMultiplier: 2.6, horizDamp: 2.6, vertDamp: 0.8, vibScale: 0.3, altHoldGain: 0.35 },
-  // autopilot: letí na aktuální cíl mise (kmen, nebo odkládací plocha), pak hover
-  autopilot: {
-    maxSpeed: 13,               // m/s
-    cruiseAlt: 14,              // výška nad cílem [m]
-    arriveRadius: 4.5,          // m — uvnitř se přepne na hover
-    kPos: 0.35,                 // P regulátor pozice → cílová rychlost
-    kVel: 1.6,                  // P regulátor rychlosti → cílový náklon
-    maxTiltDeg: 18,
-    yawGain: 0.06,
-    altGain: 0.06,
-    vibScale: 0.3,
-  },
   // ovládání lana navíc přes Shift + kolečko myši (kromě R/V)
   wheelWinchWithShift: true,
 } as const;
+
+// Grafické předvolby + počet generovaných stromů (samostatné nastavení grafiky)
+export const GRAPHICS = {
+  qualities: ['low', 'medium', 'high'] as const,
+  qualityDefault: 'high' as const,
+  presets: {
+    low: { pixelRatio: 1, shadows: false, shadowMapSize: 1024, fogFarMul: 0.55 },
+    medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, fogFarMul: 0.8 },
+    high: { pixelRatio: 2, shadows: true, shadowMapSize: 2048, fogFarMul: 1.0 },
+  },
+  treeCountMin: 2000,
+  treeCountMax: 12000,
+  treeCountDefault: 9000,
+} as const;
+export type GraphicsQuality = (typeof GRAPHICS.qualities)[number];
 
 export const AUDIO = {
   masterVolume: 0.8,
@@ -366,7 +365,9 @@ export const SETTINGS_DEFAULTS = {
   stickSmoothing: CONTROLS.stickSmoothingDefault, // τ filtru páky [s]
   fov: CAMERA.fovDefault,
   zoom: CAMERA.zoomDefault,
-  hookCam: 'off' as HookCamMode, // poslední režim hook kamery (pamatuje si ho hra)
+  hookCam: 'pip' as HookCamMode, // výchozí: obraz v obrazu v pravém horním rohu (17.2)
+  graphicsQuality: GRAPHICS.qualityDefault as GraphicsQuality,
+  treeCount: GRAPHICS.treeCountDefault,
   muted: false,
   // „témata“ a režimy v panelu nastavení (klávesa O)
   timeOfDay: 'auto' as TimeOfDayPreset,

@@ -4,7 +4,7 @@
 // výchylka virtuální páky (kritéria 6.7a–d). Klávesy: kolektiv W/S, pedály A/D.
 // ============================================================================
 
-import { CONTROLS, GAMEPLAY, SETTINGS_DEFAULTS, type TimeOfDayPreset, type FlightMode, type HookCamMode } from '../config';
+import { CONTROLS, GAMEPLAY, SETTINGS_DEFAULTS, type TimeOfDayPreset, type FlightMode, type HookCamMode, type GraphicsQuality } from '../config';
 import { clamp, expoCurve, deadZone, DEG, damp } from '../utils/math';
 
 export interface ControlSettings {
@@ -14,7 +14,9 @@ export interface ControlSettings {
   stickSmoothing: number;       // τ dolnopropustního filtru páky [s] (6.2b)
   fov: number;                  // FOV kamery
   zoom: number;                 // vzdálenost chase kamery [m]
-  hookCam: HookCamMode;         // off / pip / full (6.5d)
+  hookCam: HookCamMode;         // pip / full / off (6.5d)
+  graphicsQuality: GraphicsQuality; // low / medium / high (17.5)
+  treeCount: number;            // počet generovaných stromů (17.5)
   muted: boolean;
   timeOfDay: TimeOfDayPreset;  // den/noc/soumrak/auto cyklus
   windLevel: number;            // index do WEATHER.windLevels

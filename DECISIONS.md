@@ -122,3 +122,22 @@ v `src/config.ts`.
       cíle (kmene) v metrech; režim se pamatuje v localStorage.
     - **Prach u země** od rotorového proudění (17.7, minimální varianta částic).
     - HUD: ukazatel páky, indikátor držení výšky, napětí lana v %.
+
+26. **Kamera se při vyšší rychlosti sama srovná (17.1):** nad `CAMERA.realignSpeed`
+    (10 m/s) se volný rozhled (freeYaw/freePitch) rychle vynuluje a kamera jede normálně
+    za strojem — „nezasekne“ se v orbitu při letu.
+27. **Hook cam trvale v pravém horním rohu (17.2):** PiP (26 % šířky okna) se renderuje
+    vždy, když je hookCam = `pip` (výchozí); kamera je na břiše vrtulníku a míří dolů
+    podél lana na hák. `H` cykluje pip → full → off, režim se pamatuje. HUD vedle PiP
+    ukazuje vzdálenost hák–kmen (m) / hák nad zemí.
+28. **Klepání jen ve větru (17.3):** `turbulence_intensity` se násobí faktorem větru —
+    bez větru (`windLevel = 0`) je turbulence i kamerové mikro-otřesy přesně 0; mírný vítr
+    lehce, bouřka 2,5× (max 0,2°). Test klidu: 0,0043 °/s. Test „bez větru = absolutní klid“.
+29. **Světlejší obraz (17.4):** expozice 1,3, vyšší základní hemisphere světlo (0,38),
+    silnější slunce i v noci (0,6), světlejší noční obloha/mlha.
+30. **Samostatné nastavení grafiky (17.5):** v panelu O — kvalita low/medium/high
+    (pixel ratio, stíny on/off + velikost shadow mapy, dohled mlhy) a posuvník počtu
+    generovaných stromů 2 000–12 000 (přestaví instanced meshe za běhu, `World.buildTrees`).
+31. **Jen dva režimy letu (17.6):** autopilot a hover odstraněny, zůstává
+    `manual` / `stabilized` (klávesa P). Yaw zůstává na A/D (jako levá páka FPV
+    ovladače) — myš řídí jen pitch+roll (pravá páka).
