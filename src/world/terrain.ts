@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { WORLD, TREES } from '../config';
-import { terrainHeight, terrainNormal } from '../utils/noise';
+import { terrainHeight, terrainNormal, waterLevelOf, type TerrainCfg } from '../utils/noise';
 import { mulberry32, clamp } from '../utils/math';
 import { mergeNonIndexed, nonIndexed } from '../utils/geom';
 
@@ -21,6 +21,9 @@ const GRID_CELL = 25;
 
 export class World {
   readonly heightFn: (x: number, z: number) => number;
+  readonly terrainCfg: TerrainCfg;
+  readonly waterLevel: number;
+  waterMesh!: THREE.Mesh;
   trees: TreeInstance[] = [];
   private grid = new Map<number, number[]>();
   terrainMesh!: THREE.Mesh;
@@ -33,10 +36,26 @@ export class World {
 
   constructor() {
     const n = WORLD.noise;
-    this.heightFn = (x, z) => terrainHeight(x, z, {
-      seed: WORLD.seed, octaves: n.octaves, baseFrequency: n.baseFrequency,
-      persistence: n.persistence, amplitude: n.amplitude, ridgeBoost: n.ridgeBoost,
-    });
+    this.terrainCfg = {
+      seed: WORLD.seed,
+      octaves: n.octaves,
+      baseFrequency: n.baseFrequency,
+      persistence: n.persistence,
+      amplitude: n.amplitude,
+      ridgeBoost: n.ridgeBoost,
+      baseLift: n.baseLift,
+      smoothRadius: n.smoothRadius,
+      clearings: WORLD.treeClearings.map((c) => ({
+        x: c.x, z: c.z, r: c.r,
+        flat: (c.x === WORLD.heliport.x && c.z === WORLD.heliport.z) ? 0 : null, // přepíše se níže
+      })),
+      water: WORLD.water,
+    };
+    this.heightFn = (x, z) => terrainHeight(x, z, this.terrainCfg);
+    this.waterLevel = waterLevelOf(this.terrainCfg);
+    // heliport: malý pahorek nad vodní hladinou
+    const hp = this.terrainCfg.clearings[0];
+    hp.flat = this.waterLevel + 3;
     this.dropCenter.y = this.heightAt(WORLD.dropZone.x, WORLD.dropZone.z);
     this.loggingCenter.y = this.heightAt(WORLD.loggingArea.x, WORLD.loggingArea.z);
   }
@@ -62,19 +81,40 @@ export class World {
     const cForest = new THREE.Color(0x2e4a26);
     const cRock = new THREE.Color(0x6e6a63);
     const cSnow = new THREE.Color(0xb8bcc2);
+    const cSand = new THREE.Color(0x9a8a5e);
     const tmp = new THREE.Color();
+    // výšková mřížka se počítá jednou (analytická funkce zůstává pro kolize)
+    const n = seg + 1;
+    const grid = new Float32Array(n * n);
+    for (let iz = 0; iz < n; iz++) {
+      for (let ix = 0; ix < n; ix++) {
+        grid[iz * n + ix] = this.heightAt(-size / 2 + (size * ix) / seg, -size / 2 + (size * iz) / seg);
+      }
+    }
+    const cell = size / seg;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
-      const h = this.heightAt(x, z);
+      const fx = clamp((x + size / 2) / cell, 0, seg - 1e-6);
+      const fz = clamp((z + size / 2) / cell, 0, seg - 1e-6);
+      const ix = Math.floor(fx);
+      const iz = Math.floor(fz);
+      const tx = fx - ix;
+      const tz = fz - iz;
+      const h =
+        grid[iz * n + ix] * (1 - tx) * (1 - tz) + grid[iz * n + ix + 1] * tx * (1 - tz) +
+        grid[(iz + 1) * n + ix] * (1 - tx) * tz + grid[(iz + 1) * n + ix + 1] * tx * tz;
       pos.setY(i, h);
-      const { slope } = this.normalAt(x, z);
+      const hR = grid[iz * n + Math.min(ix + 1, seg)];
+      const hU = grid[Math.min(iz + 1, seg) * n + ix];
+      const slope = Math.hypot((grid[iz * n + ix] - hR) / cell, (grid[iz * n + ix] - hU) / cell);
       const t = clamp(h / WORLD.noise.amplitude, 0, 1);
-      if (slope > 0.55) tmp.copy(cRock);
+      if (h < this.waterLevel + 0.9) tmp.copy(cSand); // břeh u vody
+      else if (slope > 0.55) tmp.copy(cRock);
       else if (h > WORLD.noise.amplitude * 0.72) tmp.copy(cSnow).lerp(cRock, 0.4);
       else tmp.copy(cGrass).lerp(cForest, clamp(t * 1.4, 0, 1)).lerp(cGrassDry, clamp((slope - 0.18) * 2, 0, 0.5));
       // lokální stínění podle výšky kolem (ambient occlusion-lite)
-      const ao = clamp(1 - (this.heightAt(x + 6, z) - h) * 0.02 - (this.heightAt(x - 6, z) - h) * 0.02, 0.75, 1.1);
+      const ao = clamp(1 - (hR - h) * 0.02 - (hU - h) * 0.02, 0.75, 1.1);
       colors[i * 3] = tmp.r * ao;
       colors[i * 3 + 1] = tmp.g * ao;
       colors[i * 3 + 2] = tmp.b * ao;
@@ -87,19 +127,43 @@ export class World {
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.name = 'terrain';
     scene.add(this.terrainMesh);
+
+    // vodní hladina: jedna průhledná plocha přes celou mapu — vidět je jen tam,
+    // kde terén (řeka, přítok, jezero) klesne pod hladinu
+    const waterGeo = new THREE.PlaneGeometry(WORLD.size, WORLD.size, 1, 1);
+    waterGeo.rotateX(-Math.PI / 2);
+    this.waterMesh = new THREE.Mesh(waterGeo, new THREE.MeshPhongMaterial({
+      color: 0x2e6f9e, transparent: true, opacity: 0.72, shininess: 140, specular: 0x88bbdd,
+    }));
+    this.waterMesh.position.y = this.waterLevel;
+    this.waterMesh.name = 'water';
+    scene.add(this.waterMesh);
   }
 
   // --- stromy ---------------------------------------------------------------
   buildTrees(scene: THREE.Scene): void {
     const rng = mulberry32(WORLD.seed ^ 0x9e3779b9);
     const clearings = WORLD.treeClearings;
+    // rozmísťovací grid — rychlá kontrola min. rozestupu (bez O(n²))
+    const placeGrid = new Map<number, { x: number; z: number }[]>();
+    const pKey = (x: number, z: number) => (Math.floor(x / 12) + 512) * 1024 + (Math.floor(z / 12) + 512);
+    const nearTree = (x: number, z: number) => {
+      const k = pKey(x, z);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const arr = placeGrid.get(k + dx * 1024 + dz);
+          if (arr && arr.some((t) => Math.hypot(x - t.x, z - t.z) < WORLD.treeMinDist)) return true;
+        }
+      }
+      return false;
+    };
     let attempts = 0;
     while (this.trees.length < WORLD.treeCount && attempts < WORLD.treeCount * 30) {
       attempts++;
       const x = (rng() - 0.5) * WORLD.size * 0.98;
       const z = (rng() - 0.5) * WORLD.size * 0.98;
       if (clearings.some((c) => Math.hypot(x - c.x, z - c.z) < c.r)) continue;
-      if (this.trees.some((t) => Math.hypot(x - t.x, z - t.z) < WORLD.treeMinDist)) continue;
+      if (nearTree(x, z)) continue;
       const scale = TREES.minScale + rng() * (TREES.maxScale - TREES.minScale);
       const species = Math.floor(rng() * TREES.species);
       const groundY = this.heightAt(x, z);
@@ -108,6 +172,10 @@ export class World {
         topY: groundY + (TREES.trunkHeight + TREES.crownHeight) * scale,
         radius: TREES.trunkRadius * scale * TREES.collisionRadiusFactor,
       });
+      const k = pKey(x, z);
+      let arr = placeGrid.get(k);
+      if (!arr) { arr = []; placeGrid.set(k, arr); }
+      arr.push({ x, z });
     }
     // grid pro rychlé dotazy
     this.trees.forEach((t, i) => {
@@ -117,13 +185,19 @@ export class World {
       arr.push(i);
     });
 
-    // 2 instancované sady na druh: kmen + koruna (spojené 2 kužely)
-    const trunkGeo = nonIndexed(new THREE.CylinderGeometry(0.5, 0.7, 1, 6));
-    trunkGeo.translate(0, 0.5, 0); // základ v 0
-    const crownGeo = mergeNonIndexed([
-      nonIndexed(new THREE.ConeGeometry(1.9, 1, 7)).translate(0, 0.55, 0),
-      nonIndexed(new THREE.ConeGeometry(1.3, 0.9, 7)).translate(0, 1.15, 0),
-    ]);
+    // 2 instancované sady na druh: kmen + koruna smrku (3 přesazené kužely),
+    // geometrie v reálných metrech — instance se škáluje jen uniformně
+    const trunkGeo = nonIndexed(new THREE.CylinderGeometry(TREES.trunkRadius * 0.72, TREES.trunkRadius, TREES.trunkHeight, 6, 1, true));
+    trunkGeo.translate(0, TREES.trunkHeight / 2, 0); // základ v 0
+    const coneGeos: THREE.BufferGeometry[] = [];
+    const ch = TREES.crownHeight / (TREES.crownCones - 0.5); // výška jednoho kužele
+    for (let i = 0; i < TREES.crownCones; i++) {
+      const r = 2.4 * (1 - 0.3 * i);
+      const cone = nonIndexed(new THREE.ConeGeometry(r, ch, 6, 1, true)); // bez základen = méně tri
+      cone.translate(0, TREES.trunkHeight * 0.9 + i * ch * 0.55 + ch / 2 - 1.0, 0);
+      coneGeos.push(cone);
+    }
+    const crownGeo = mergeNonIndexed(coneGeos);
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a4632, flatShading: true });
     const crownMats = [
       new THREE.MeshLambertMaterial({ color: 0x2d5230, flatShading: true }),
@@ -145,14 +219,9 @@ export class World {
         m4.compose(
           new THREE.Vector3(t.x, gy, t.z),
           q,
-          new THREE.Vector3(t.scale * TREES.trunkRadius / 0.6, t.scale * TREES.trunkHeight, t.scale * TREES.trunkRadius / 0.6),
+          new THREE.Vector3(t.scale, t.scale, t.scale),
         );
         trunks.setMatrixAt(k, m4);
-        m4.compose(
-          new THREE.Vector3(t.x, gy + t.scale * TREES.trunkHeight * 0.9, t.z),
-          q,
-          new THREE.Vector3(t.scale, t.scale * TREES.crownHeight, t.scale),
-        );
         crowns.setMatrixAt(k, m4);
         col.setHSL(0.33 + ((t.x * 7.13) % 1) * 0.03, 0.45, 0.32 + ((t.z * 3.7) % 1) * 0.1);
         crowns.setColorAt(k, col);

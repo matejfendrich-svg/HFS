@@ -9,6 +9,11 @@ plynulost, přesnost a bezpečnost přátelskými „pilotními poznámkami“ s
 Vizuální styl: low-poly, flat-shaded, vše generované kódem (žádné externí assety,
 procedurální textury i zvuk). WebGL2 přes three.js, TypeScript, Vite.
 
+Svět: **4×4 km** uhlazený kopcovitý terén (288² buněk, value noise), **9 000 vyšších
+smrků** (3 přesazené kužely), **řeka s přítokem a jezero** (vodní hladina přes celou mapu),
+těžební oblast, odkládací plocha a heliport. Režimy letu: Stabilizovaný (výchozí, arkádově
+zbržděný jako Construction Simulator — reálné rychlosti zůstávají), Hover, Autopilot, Manual.
+
 Kompletní zadání: [GAME_SPEC.md](GAME_SPEC.md) · rozhodnutí při vývoji: [DECISIONS.md](DECISIONS.md)
 
 ## Instalace a spuštění

@@ -8,34 +8,44 @@
 
 export const WORLD = {
   seed: 20241118,               // konfigurovatelný seed světa (oddíl 4.1)
-  size: 2000,                   // terén 2 km x 2 km [m]
-  terrainSegments: 144,         // mřížka výškové mapy (144x144 buněk ~ 13,9 m)
+  size: 4000,                   // terén 4 km x 4 km [m]
+  terrainSegments: 288,         // mřížka výškové mapy (2× více polygonů než 144)
   noise: {
     octaves: 5,
-    baseFrequency: 1 / 420,     // měřítko největší vlny terénu
-    persistence: 0.55,
-    amplitude: 95,              // výška kopců [m]
-    ridgeBoost: 0.35,           // přidané "hřebeny" pro kopcovitost
+    baseFrequency: 1 / 700,     // měřítko největší vlny terénu (větší mapa = větší kopce)
+    persistence: 0.5,
+    amplitude: 110,             // výška kopců [m]
+    ridgeBoost: 0.12,           // mírné hřebeny — krajina je uhlazená
+    baseLift: 20,               // celkové nadzdvižení, aby údolí neklesla pod hladinu
+    smoothRadius: 6,            // mírné vyhlazení výškové mapy (m)
   },
-  treeCount: 6500,              // > 5 000 stromů (akceptační kritérium fáze 1)
-  treeMinDist: 7,               // min. rozestup stromů [m]
+  // vodní toky: řeka přes celou mapu + přítok + jezero (vykreslí se pod vodní hladinou)
+  water: {
+    river: { zBase: -700, amp1: 520, f1: 0.0011, amp2: 160, f2: 0.0037, width: 34, depth: 5 },
+    stream: { xBase: 1400, amp: 110, f: 0.009, width: 11, depth: 3, zFrom: -300, zTo: 1060 },
+    lake: { x: 1400, z: 1300, r: 240, depth: 7 },
+    levelOffset: -4,           // hladina = surová výška v referenčním bodě řeky + offset
+  },
+  treeCount: 9000,              // hustší výskyt stromů na 4×4 km
+  treeMinDist: 6,               // min. rozestup stromů [m]
   treeClearings: [             // bezlesé plochy: heliport, paseka, těžba
-    { x: 0, z: 0, r: 55 },      // startovní heliport (střed světa)
-    { x: 520, z: -430, r: 70 }, // odkládací plocha
-    { x: -560, z: 380, r: 85 }, // těžební oblast
+    { x: 0, z: 0, r: 60 },        // startovní heliport (střed světa)
+    { x: 1000, z: -800, r: 85 },  // odkládací plocha
+    { x: -1200, z: 900, r: 115 }, // těžební oblast
   ],
   heliport: { x: 0, z: 0 },     // startovní pozice (výšku dopočítá terén)
-  dropZone: { x: 520, z: -430, radius: 10, tolerance: 2 }, // kruh z latí ±2 m
-  loggingArea: { x: -560, z: 380, radius: 70 },
+  dropZone: { x: 1000, z: -800, radius: 10, tolerance: 2 }, // kruh z latí ±2 m
+  loggingArea: { x: -1200, z: 900, radius: 95 },
 } as const;
 
 export const TREES = {
-  species: 3,                   // 2–3 druhy jehličnanů (oddíl 4.2)
-  minScale: 0.7,
-  maxScale: 1.6,
-  trunkRadius: 0.32,            // základní poloměr kmene před škálováním
-  trunkHeight: 3.2,
-  crownHeight: 9.5,
+  species: 3,                   // varianty smrku (oddíl 4.2)
+  minScale: 0.8,
+  maxScale: 2.1,                // vyšší stromy
+  trunkRadius: 0.34,            // základní poloměr kmene před škálováním
+  trunkHeight: 4.4,             // vyšší kmen
+  crownHeight: 15.0,            // delší úzká koruna smrku
+  crownCones: 3,                // 3 přesazené kužely = typický smrk
   collisionRadiusFactor: 1.15,  // kolizní kužel kmene o trochu širší než vizuál
 } as const;
 
@@ -272,10 +282,12 @@ export type FlightMode = (typeof FLIGHT_MODES)[number];
 
 export const GAMEPLAY = {
   modeDefault: 'stabilized' as FlightMode,
-  // stabilizovaný režim: vyšší tlumení náklonu, auto-level, mírný útlum rychlosti, méně chvění
-  stabilized: { kDMultiplier: 1.9, autoLevelDeadband: 0.07, horizDamp: 0.55, vibScale: 0.35 },
-  // hover: držení pozice — silné tlumení vodorovné rychlosti, výšku drží kolektiv
-  hover: { kDMultiplier: 2.2, autoLevelDeadband: 0.05, horizDamp: 2.2, vibScale: 0.3, altHoldGain: 0.35 },
+  // stabilizovaný režim („arkádově zbržděný“, jako Construction Simulator, ale reálné
+  // rychlosti): vyšší tlumení náklonu, auto-level, silný lineární útlum rychlosti
+  // (vodorovně i svisle) — stroj se po puštění páky rychle „zastaví“, ale letí reálně
+  stabilized: { kPMultiplier: 1.7, kDMultiplier: 2.6, autoLevelDeadband: 0.07, horizDamp: 1.5, vertDamp: 0.7, vibScale: 0.35 },
+  // hover: držení pozice — velmi silné tlumení vodorovné rychlosti, výšku drží kolektiv
+  hover: { kPMultiplier: 1.9, kDMultiplier: 2.8, autoLevelDeadband: 0.05, horizDamp: 3.2, vertDamp: 1.0, vibScale: 0.3, altHoldGain: 0.35 },
   // autopilot: letí na aktuální cíl mise (kmen, nebo odkládací plocha), pak hover
   autopilot: {
     maxSpeed: 13,               // m/s
@@ -304,8 +316,9 @@ export const RENDER = {
   maxPixelRatio: 2,
   shadowMapSize: 2048,
   shadowBox: 160,               // velikost stínového boxu kolem vrtulníku [m]
-  fogNear: 250,
-  fogFar: 1600,
+  fogNear: 300,
+  fogFar: 2800,                 // větší mapa 4×4 km
+  skyRadius: 8000,
   heliMaxTris: 5000,            // rozpočet trojúhelníků modelu vrtulníku
 };
 

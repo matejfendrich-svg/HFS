@@ -92,7 +92,7 @@ class Game {
     this.renderer.toneMappingExposure = 1.05;
     app.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 6000);
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, RENDER.skyRadius * 2);
     this.camera.position.set(0, 30, 60);
 
     // svět
@@ -149,7 +149,7 @@ class Game {
           gl_FragColor = vec4(col, 1.0);
         }`,
     });
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(4200, 24, 16), this.skyMat);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(RENDER.skyRadius, 24, 16), this.skyMat);
     this.scene.add(sky);
 
     // hvězdy (viditelné v noci)
@@ -158,7 +158,7 @@ class Game {
     for (let i = 0; i < 900; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = Math.acos(Math.random() * 0.95);
-      const r = 4000;
+      const r = RENDER.skyRadius - 500;
       starPos[i * 3] = r * Math.sin(e) * Math.cos(a);
       starPos[i * 3 + 1] = r * Math.cos(e) + 50;
       starPos[i * 3 + 2] = r * Math.sin(e) * Math.sin(a);
@@ -584,6 +584,10 @@ class Game {
   private updateVisuals(dt: number): void {
     // vrtulník (s interpolací mezi fyzikálními kroky se promítne v render())
     this.heliModel.update(dt, this.heli.omega, this.rope.winchRate, performance.now() / 1000, this.nightFrac);
+    // vodní hladina mírně „dýchá“ (jemná animace)
+    if (this.world.waterMesh) {
+      (this.world.waterMesh.material as THREE.MeshPhongMaterial).opacity = 0.68 + Math.sin(performance.now() / 1400) * 0.05;
+    }
     // déšť při bouřce: částice padají kolem kamery
     if (this.rain) {
       this.rain.visible = this.stormActive;

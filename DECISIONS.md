@@ -73,3 +73,23 @@ v `src/config.ts`.
 20. **Hratelný single-file build je commitnutý v kořeni repozitáře jako
     `rotor-logger.html`** (stejně jako u FSS — celá hra v jednom HTML přímo v repo).
     `npm run pack` ho po buildu aktualizuje; `dist/` zůstává v .gitignore.
+21. **Mapa 4×4 km (požadavek zadavatele):** `WORLD.size = 4000`, mřížka terénu 288²
+    buněk (2× více polygonů než 144²), mírné vyhlazení výškové mapy přes okolí
+    (`smoothRadius`) = „uhlazená krajina“. Stromy: 9 000 ks, vyšší (škála 0,8–2,1,
+    kmen 4,4 m + koruna 15 m), koruna smrku = 3 přesazené otevřené kužely.
+22. **Voda:** řeka podél sinusové křivky přes celou mapu + přítok z jezera do řeky +
+    jezero (r=240 m). Koryta se vyhloubí pod hladinu; hladina = minimum reliéfu podél
+    řeky −4 m; jedna průhledná plocha přes celou mapu se zobrazí jen v korytech.
+    Údolí mimo toky se zvednou nad hladinu (žádná náhodná jezírka). Heliport je pahorek
+    3 m nad hladinou. Barva břehu (písek) pod hladinou + 0,9 m.
+23. **Ocasní vrtule opravena:** listy mají nyní tětivu podél správné osy (rotace kolem
+    X, disk v rovině YZ, na levé straně svislé plochy) + hřídel, náboj, úchyty listů;
+    rozostřovací disk leží správně v rovině YZ. Další detaily: vodorovný stabilizátor,
+    šípovitá ocasní plocha, přistávací světlo, stupínky, madla na kostře, vítrník,
+    víčka nádrží, brzda rotoru. Celkem 3 524 tri (limit 5 000).
+24. **„Zbržděná“ arkádová fyzika (požadavek zadavatele):** ve režimech stabilized /
+    hover / autopilot se přidává lineární útlum rychlosti (vodorovný 1,5–3,2 1/s,
+    svislý 0,7–1,0 1/s) a vyšší kP/kD náklonu — stroj se po puštění páky rychle
+    „zastaví“ jako ve Construction Simulator. **Reálné rychlosti jsou zachované** —
+    jde jen o tlumení, žádné omezení maximální rychlosti. V režimu `manual` zůstává
+    čistá fyzika (setrvačnost, bez útlumu).

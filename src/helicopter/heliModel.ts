@@ -172,32 +172,58 @@ export class HeliModel {
     this.rotorGroup.add(this.blurDisk);
     g.add(this.rotorGroup);
 
-    // --- ocasní rameno + plocha + čtyřlistý ocasní rotor ---
-    const tail = cyl(0.16, 0.3, 3.4, orange, 8);
+    // --- ocasní rameno (kónické), vodorovná plocha, svislá ocasní plocha ---
+    const tailLen = 3.8;
+    const tail = cyl(0.12, 0.3, tailLen, orange, 8); // kužel: úzký konec vzadu
     tail.rotation.x = Math.PI / 2;
-    tail.position.set(0, 0.9, L / 2 - 1.2);
+    tail.position.set(0, 0.95, L / 2 - 1.6);
     g.add(tail);
-    const fin = box(0.12, 1.8, 1.4, orange, 0, 1.6, L / 2 - 0.4);
+    // vodorovný stabilizátor poblíž ocasu
+    const stab = box(3.6, 0.08, 0.9, orange, 0, 1.15, L / 2 - 1.6);
+    g.add(stab);
+    g.add(box(0.5, 0.1, 0.95, white, -1.4, 1.15, L / 2 - 1.6)); // koncové plošky
+    g.add(box(0.5, 0.1, 0.95, white, 1.4, 1.15, L / 2 - 1.6));
+    // svislá ocasní plocha na konci ramene (šípovitá ze dvou dílů)
+    const fin = box(0.14, 1.9, 1.1, orange, 0, 1.55, L / 2 - 0.15);
     g.add(fin);
-    const finTop = box(0.1, 0.5, 1.2, white, 0, 2.6, L / 2 - 0.4);
-    g.add(finTop);
-    this.tailRotorGroup.position.set(0.35, 1.5, L / 2 - 0.2);
-    const tBladeLen = 1.9;
+    const finSweep = box(0.12, 1.1, 0.8, orange, 0, 2.1, L / 2 + 0.28);
+    finSweep.rotation.x = -0.5;
+    g.add(finSweep);
+    g.add(box(0.1, 0.45, 1.0, white, 0, 2.75, L / 2 - 0.1)); // bílá špička
+
+    // --- čtyřlistá ocasní vrtule na levé straně plochy ---
+    // osa rotoru je X (vrtule točí v rovině YZ); list = tenký kvádr s tětivou podél Z
+    this.tailRotorGroup.position.set(-0.32, 1.75, L / 2 - 0.05);
+    const shaft = cyl(0.07, 0.07, 0.5, steel, 6);
+    shaft.rotation.z = Math.PI / 2;
+    shaft.position.x = 0.18;
+    this.tailRotorGroup.add(shaft);
+    const tHub = cyl(0.16, 0.16, 0.22, dark, 8);
+    tHub.rotation.z = Math.PI / 2;
+    this.tailRotorGroup.add(tHub);
+    const tBladeLen = 1.95;
     for (let i = 0; i < type.tailRotorBlades; i++) {
       const a = (i / type.tailRotorBlades) * Math.PI * 2;
-      const blade = box(0.22, tBladeLen, 0.05, bladeMat, 0, tBladeLen / 2 + 0.2, 0);
       const holder = new THREE.Group();
-      holder.rotation.z = a;
-      holder.add(blade);
+      holder.rotation.x = a;
+      // úchyt (grip) + list: tětiva podél Z, tloušťka podél X — správně pro rotaci kolem X
+      const grip = box(0.09, 0.42, 0.14, dark, 0, 0.25, 0);
+      const blade = box(0.05, tBladeLen, 0.24, bladeMat, 0, tBladeLen / 2 + 0.35, 0);
+      holder.add(grip, blade);
       this.tailRotorGroup.add(holder);
     }
-    const tBlurGeo = new THREE.CircleGeometry(tBladeLen + 0.3, 24);
+    const tBlurGeo = new THREE.CircleGeometry(tBladeLen + 0.25, 24);
+    tBlurGeo.rotateY(Math.PI / 2); // disk ocasní vrtule leží v rovině YZ
     this.tailBlurDisk = new THREE.Mesh(
       tBlurGeo,
       new THREE.MeshBasicMaterial({ color: 0x555a60, transparent: true, opacity: 0, depthWrite: false }),
     );
     this.tailRotorGroup.add(this.tailBlurDisk);
     g.add(this.tailRotorGroup);
+    // anténka na špičce plochy
+    const tailAnt = cyl(0.02, 0.02, 0.8, dark, 5);
+    tailAnt.position.set(0, 3.3, L / 2 - 0.1);
+    g.add(tailAnt);
 
     // --- pevný trojkolový podvozek (přední + dvě hlavní kola) ---
     const wheel = (x: number, y: number, z: number): THREE.Group => {
@@ -261,6 +287,34 @@ export class HeliModel {
     guide.rotation.z = Math.PI / 2;
     guide.position.set(0, type.attachOffsetY + 0.1, -1.35);
     g.add(guide);
+
+    // --- další detaily: přistávací světlo, stupínky, madlo, vítrník, brzda rotoru ---
+    const landingLight = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfff6cc }),
+    );
+    landingLight.position.set(0, -1.85, -L / 2 + 0.4);
+    g.add(landingLight);
+    this.navLights.push(landingLight); // přistávací světlo se rozsvítí v noci
+    g.add(box(0.5, 0.08, 0.25, steel, -1.0, -1.95, -L / 2 + 2.8)); // stupínek dveří
+    g.add(box(0.5, 0.08, 0.25, steel, 1.0, -1.95, -L / 2 + 2.8));
+    // madlo podél horní části kostry
+    g.add(box(0.06, 0.06, spineLen, steel, -hw * 0.55, 0.6 + hh + 0.12, spineZc));
+    g.add(box(0.06, 0.06, spineLen, steel, hw * 0.55, 0.6 + hh + 0.12, spineZc));
+    // vítrník (stěrač) na čelním skle
+    const wiper = box(0.04, 0.7, 0.06, dark, 0.55, 0.6, -L / 2 + 0.32);
+    wiper.rotation.z = 0.25;
+    g.add(wiper);
+    // víčka nádrží na motorech
+    for (const sx of [-1.35, 1.35]) {
+      const cap = cyl(0.12, 0.12, 0.06, white, 8);
+      cap.position.set(sx, 2.78, -3.6);
+      g.add(cap);
+    }
+    // brzda hlavního rotoru na stožáru
+    const brake = cyl(0.42, 0.42, 0.12, dark, 10);
+    brake.position.set(0, 1.55, -1.0);
+    g.add(brake);
 
     // --- poziční světla a maják (blikají v update) ---
     const mkLight = (color: number, x: number, y: number, z: number): THREE.Mesh => {

@@ -298,13 +298,21 @@ export class FlightModel {
       const cdA = t.dragCdA + (env.loadMass > 0 ? t.loadDragCdA : 0);
       F.addScaledVector(vAir, -0.5 * rho * cdA * V); // D = ½ρv²C_D·A ve směru −v
     }
-    // stabilizované režimy (DJI-like): útlum vodorovné rychlosti při zavěšení („přibitý“ let)
+    // stabilizované režimy (DJI-like / arkádově „zbržděné“): lineární útlum rychlosti
+    // vodorovně i svisle — stroj se po puštění páky rychle zastaví, ale reálné rychlosti
+    // zůstávají zachované (jen tlumení, žádné omezení maxima)
     const horizDamp = env.mode === 'hover' ? GAMEPLAY.hover.horizDamp
       : env.mode === 'stabilized' ? GAMEPLAY.stabilized.horizDamp
       : env.mode === 'autopilot' ? 0.4 : 0;
+    const vertDamp = env.mode === 'hover' ? GAMEPLAY.hover.vertDamp
+      : env.mode === 'stabilized' ? GAMEPLAY.stabilized.vertDamp
+      : env.mode === 'autopilot' ? 0.3 : 0;
     if (horizDamp > 0) {
       F.x -= this.vel.x * m * horizDamp;
       F.z -= this.vel.z * m * horizDamp;
+    }
+    if (vertDamp > 0) {
+      F.y -= this.vel.y * m * vertDamp;
     }
     // ocasní rotor: příčná síla + kompenzace reaktivního momentu (5.1)
     const right = this.right(new THREE.Vector3());
@@ -330,14 +338,15 @@ export class FlightModel {
       tgtPitch = dampAngle(tgtPitch, 0, 3.5, dt);
       tgtRollE = dampAngle(tgtRollE, 0, 3.5, dt);
     }
-    // vyšší tlumení náklonu ve stabilizovaných režimech (méně „klepání“)
+    // vyšší tlumení náklonu ve stabilizovaných režimech (méně „klepání“, rychlejší odezva)
     const kD = A.kD * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kDMultiplier : GAMEPLAY.stabilized.kDMultiplier));
+    const kP = A.kP * (env.mode === 'manual' ? 1 : (env.mode === 'hover' ? GAMEPLAY.hover.kPMultiplier : GAMEPLAY.stabilized.kPMultiplier));
     // vnější moment od lana na závěsném bodě (7.6) — kyvadlový efekt nákladu
     const rAttach = new THREE.Vector3(0, t.attachOffsetY, 0).applyQuaternion(this.quaternion());
     const M = new THREE.Vector3().crossVectors(rAttach, this.attachForce);
     const Mbody = M.applyQuaternion(this.q.clone().invert());
-    let pitchAcc = A.kP * wrapAngle(tgtPitch - this.pitch) - kD * this.pitchRate + Mbody.x / t.inertia.x;
-    let rollAcc = A.kP * wrapAngle(tgtRollE - this.roll) - kD * this.rollRate + Mbody.z / t.inertia.z;
+    let pitchAcc = kP * wrapAngle(tgtPitch - this.pitch) - kD * this.pitchRate + Mbody.x / t.inertia.x;
+    let rollAcc = kP * wrapAngle(tgtRollE - this.roll) - kD * this.rollRate + Mbody.z / t.inertia.z;
     this.pitchRate = clamp(this.pitchRate + pitchAcc * dt, -A.maxPitchRateDegS * DEG, A.maxPitchRateDegS * DEG);
     this.rollRate = clamp(this.rollRate + rollAcc * dt, -A.maxRollRateDegS * DEG, A.maxRollRateDegS * DEG);
     this.pitch = clamp(this.pitch + this.pitchRate * dt, -A.maxPitchDeg * DEG, A.maxPitchDeg * DEG);
